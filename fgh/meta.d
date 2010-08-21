@@ -9,6 +9,20 @@ module fgh.meta;
 import std.typetuple : TypeTuple;
 
 
+void main()
+{
+    enum a = typeSet!(int,   real);
+    enum b = typeSet!(int, string);
+
+    static assert((a | b) == typeSet!(int, real, string));
+    static assert((a & b) == typeSet!(int              ));
+    static assert((a - b) == typeSet!(     real        ));
+    static assert((a ^ b) == typeSet!(     real, string));
+
+    static assert(a in typeSet!(int, real, bool));
+    static assert(a.contains!(int));
+}
+
 
 //----------------------------------------------------------------------------//
 // Sort
@@ -331,33 +345,6 @@ unittest    // symbols
 
 
 
-// Helper templates for isSame!(...) below.
-
-private template isSame_(A, B)
-{
-    enum isSame_ = is(A == B);
-}
-
-private template isSame_(alias a, alias b)
-{
-    static if (__traits(compiles, interpretNow!(bool, a == b)))
-    {
-        enum isSame_ = is(typeof(a) == typeof(b)) && a == b;
-    }
-    else
-    {
-        enum isSame_ = __traits(isSame, a, b);
-    }
-}
-
-private template isSame_(items...)
-    if (items.length == 2)
-{
-    enum isSame_ = is(Entity!(items[0]).ToType ==
-                      Entity!(items[1]).ToType);
-}
-
-
 /**
  * Returns $(D true) if a tuple $(D items...) is composed of same entity.
  *
@@ -398,6 +385,33 @@ template isSame(items...)
     {
         enum isSame = true; // isSame(x) == true for all x
     }
+}
+
+
+private template isSame_(A, B)
+{
+    enum isSame_ = is(A == B);
+}
+
+
+private template isSame_(alias a, alias b)
+{
+    static if (__traits(compiles, interpretNow!(bool, a == b)))
+    {
+        enum isSame_ = is(typeof(a) == typeof(b)) && a == b;
+    }
+    else
+    {
+        enum isSame_ = __traits(isSame, a, b);
+    }
+}
+
+
+private template isSame_(items...)
+    if (items.length == 2)
+{
+    enum isSame_ = is(Entity!(items[0]).ToType ==
+                      Entity!(items[1]).ToType);
 }
 
 
@@ -1059,6 +1073,149 @@ template StaticList(items...)
     {
         alias StaticList!(items[1 .. $]) tail;
     }
+}
+
+
+
+//----------------------------------------------------------------------------//
+//
+//----------------------------------------------------------------------------//
+
+template Sequence(items...)
+{
+    ///
+    enum bool empty = (items.length == 0);
+
+    ///
+    enum size_t length = items.length;
+
+    ///
+    alias items elements;
+}
+
+
+//----------------------------------------------------------------------------//
+// Static Set
+//----------------------------------------------------------------------------//
+
+
+@safe TypeSet!(items) typeSet(items...)() pure nothrow
+{
+    return typeof(return).init;
+}
+
+
+immutable struct TypeSet(items...)
+    if (isSetElementsNormalized!(items))
+{
+pure nothrow:
+
+    ///
+    enum bool empty = (items.length == 0);
+
+    ///
+    enum size_t length = items.length;
+
+    ///
+    alias Sequence!(items) sequence;
+
+
+
+    //----------------------------------------------------------------//
+    // Container Operations
+    //----------------------------------------------------------------//
+
+
+    auto add(ritems...)()
+    {
+        return typeSet!(items, ritems);
+    }
+
+
+    auto remove(ritems...)()
+    {
+    }
+
+
+
+    //----------------------------------------------------------------//
+    // Comparison
+    //----------------------------------------------------------------//
+
+
+    // equivalence
+    bool opEquals(ritems...)(TypeSet!(ritems) )
+    {
+        return is(TypeSet!(items) == TypeSet!(ritems));
+    }
+
+
+    // is subset of ...
+    bool opBinary(string op : "in", R : TypeSet!ritems, ritems...)(R rhs)
+    {
+        return this == (this & rhs);
+    }
+
+
+    // contains ...
+    template contains(ritems...)
+    {
+        enum contains = (typeSet!ritems in typeSet!items);
+    }
+
+
+
+    //----------------------------------------------------------------//
+    // Set Operations
+    //----------------------------------------------------------------//
+
+
+    private template OpBinary(alias setOperation, R)
+    {
+        alias TypeSet!(
+                setOperation!(   sequence,
+                               R.sequence,
+                               staticSetOrdering )) OpBinary;
+    }
+
+
+    // intersection
+    OpBinary!(StaticSetIntersection, R)
+        opBinary(string op : "&", R : TypeSet!ritems, ritems...)(R )
+    {
+        return typeof(return)();
+    }
+
+
+    // union
+    OpBinary!(StaticSetUnion, R)
+        opBinary(string op : "|", R : TypeSet!ritems, ritems...)(R )
+    {
+        return typeof(return)();
+    }
+
+
+    // difference
+    OpBinary!(StaticSetDifference, R)
+        opBinary(string op : "-", R : TypeSet!ritems, ritems...)(R )
+    {
+        return typeof(return)();
+    }
+
+
+    // symmetric difference
+    OpBinary!(StaticSetSymmetricDifference, R)
+        opBinary(string op : "^", R : TypeSet!ritems, ritems...)(R )
+    {
+        return typeof(return)();
+    }
+}
+
+
+template TypeSet(items...)
+    if (!isSetElementsNormalized!(items))
+{
+    alias TypeSet!(NormalizeSetElements!(items)) TypeSet;
 }
 
 
