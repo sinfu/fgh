@@ -340,9 +340,12 @@ private template isSame_(A, B)
 
 private template isSame_(alias a, alias b)
 {
-    static if (__traits(compiles, interpretNow!(bool, a == b)))
+    static if (is(typeof(a) A) && is(typeof(b) B))
     {
-        enum isSame_ = is(typeof(a) == typeof(b)) && a == b;
+        static if (__traits(compiles, interpretNow!(bool, a == b) ))
+            enum isSame_ = is(A == B) && a == b;
+        else
+            enum isSame_ = __traits(isSame, a, b);
     }
     else
     {
@@ -484,6 +487,16 @@ unittest    // compare three or more entities
     static assert(!isSame!(1, 1, 0, 1));
     static assert(!isSame!(1, 1, 1, 0));
     static assert(!isSame!(1, 1, 1, int));
+}
+
+unittest    // BUG: enum == enum?
+{
+    enum A { init }
+    enum B { init }
+
+    static assert( isSame!(A, A));
+    static assert( isSame!(B, B));
+    static assert(!isSame!(A, B));
 }
 
 
