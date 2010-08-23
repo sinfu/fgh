@@ -44,7 +44,7 @@ static assert(a == "floating point");
 /**
  * .
  */
-template StaticSwitch(alias target)
+template StaticSwitch(alias target, alias equal = isSame)
 {
     // Install Case/Finish/Otherwise nodes.
     mixin GenerateNode!(Condition.init, SwitchState!target);
@@ -111,7 +111,7 @@ private:
         {
             private alias popCase!(state, match) nextState;
 
-            static if (isSame!(target, match))
+            static if (equal!(target, match))
                 mixin GenerateNode!(Condition.matched, nextState, result);
             else
                 mixin GenerateNode!(Condition.unmatched, nextState);
@@ -338,7 +338,7 @@ unittest    // result = symbol
 /**
  * ditto
  */
-template StaticSwitch(Target)
+template StaticSwitch(Target, alias equal = isSame)
 {
     // Install Case/Finish/Otherwise nodes.
     mixin GenerateNode!(Condition.init, SwitchState!Target);
@@ -405,7 +405,7 @@ private:
         {
             private alias popCase!(state, Match) nextState;
 
-            static if (isSame!(Target, Match))
+            static if (equal!(Target, Match))
                 mixin GenerateNode!(Condition.matched, nextState, result);
             else
                 mixin GenerateNode!(Condition.unmatched, nextState);
