@@ -2,16 +2,44 @@
  * $(LINK http://github.com/sinfu/fgh/blob/master/fgh/meta.d)
  *
  * Macros:
- *  D = $(I $1)
+ *  D          = $(I $1)
+ *  Workaround = $(RED [Workaround]) $0
+ *  TODO       = $(RED [TODO]) $0
  */
 module fgh.meta;
 
 import std.typetuple : TypeTuple;
 
 
+unittest
+{
+    enum a = staticSet!(int,   real);
+    enum b = staticSet!(int, string);
+
+    static assert((a | b) == staticSet!(int, real, string));
+    static assert((a & b) == staticSet!(int              ));
+    static assert((a - b) == staticSet!(     real        ));
+    static assert((a ^ b) == staticSet!(     real, string));
+
+    static assert(a in staticSet!(real, bool, int));
+    static assert(a.contains!(int));
+}
+
+unittest
+{
+    enum  zero = staticSet!();
+    enum   one = zero.add!(zero);
+    enum   two =  one.add!( one);
+    enum three =  two.add!( two);
+
+    static assert(three == staticSet!(zero, one, two));
+}
+
+
 
 //----------------------------------------------------------------------------//
-// Sort
+// template StaticSort  (less, items...)
+// template StaticUniq  (      items...)
 //----------------------------------------------------------------------------//
 
 
@@ -86,8 +114,8 @@ unittest    // sorting strings
 
 unittest    // sorting types
 {
-    alias StaticSort!(heterogeneousLess,  int,  real, short) A;
-    alias StaticSort!(heterogeneousLess, real, short,   int) B;
+    alias StaticSort!(genericLess,  int,  real, short) A;
+    alias StaticSort!(genericLess, real, short,   int) B;
 
     static assert(  int.mangleof == "i");
     static assert( real.mangleof == "e");
@@ -144,12 +172,671 @@ private template MergeSort(alias less, items...)
 
 
 
+/**
+ * Removes any consecutive group of duplicate elements in $(D items) except
+ * the first element of each group.
+ *
+ * Params:
+ *  items = Tuple of zero or more compile-time entities.
+ *
+ * Returns:
+ *  $(D items) without any consecutive duplicate elements.
+ *
+ * Example:
+--------------------
+alias StaticUniq!(1, 2, 3, 3, 4, 4, 4, 2, 2) uniq;
+static assert(MatchTuple!(uniq).With!(1, 2, 3, 4, 2));
+--------------------
+ */
+template StaticUniq(items...)
+{
+    static if (items.length > 1)
+    {
+        static if (isSame!(items[0], items[1]))
+            alias            StaticUniq!(items[1 .. $])  StaticUniq;
+        else
+            alias TypeTuple!(items[0],
+                             StaticUniq!(items[1 .. $])) StaticUniq;
+    }
+    else
+    {
+        alias items StaticUniq;
+    }
+}
+
+unittest
+{
+    alias StaticUniq!(       ) uniq___;
+    alias StaticUniq!(1      ) uniq1__;
+    alias StaticUniq!(1, 2, 3) uniq123;
+    alias StaticUniq!(1, 1, 1) uniq111;
+    alias StaticUniq!(1, 1, 2) uniq112;
+    alias StaticUniq!(1, 2, 2) uniq122;
+    alias StaticUniq!(1, 2, 1) uniq121;
+
+    static assert(uniq___.length == 0);
+    static assert(uniq1__.length == 1);
+    static assert(uniq123.length == 3);
+    static assert(uniq111.length == 1);
+    static assert(uniq112.length == 2);
+    static assert(uniq122.length == 2);
+    static assert(uniq121.length == 3);
+
+    static assert([ uniq1__ ] == [ 1       ]);
+    static assert([ uniq123 ] == [ 1, 2, 3 ]);
+    static assert([ uniq111 ] == [ 1       ]);
+    static assert([ uniq112 ] == [ 1,    2 ]);
+    static assert([ uniq122 ] == [ 1, 2    ]);
+    static assert([ uniq121 ] == [ 1, 2, 1 ]);
+}
+
+
+
+//----------------------------------------------------------------------------//
+// Sequence
+//----------------------------------------------------------------------------//
+
+
+/**
+ * $(D Sequence) simply confines a static tuple inside its template instance.
+ *
+ * Example:
+ *  The following example uses $(D Sequence) for (a) passing multiple tuples
+ *  to a template, and for (b) checking the result.
+--------------------
+template Interleave(alias A, alias B)
+    if (A.length == B.length)
+{
+    static if (A.empty)
+        alias TypeTuple!() Interleave;
+    else
+        alias TypeTuple!(
+            A.elements[0],
+            B.elements[0],
+            Interleave!( Sequence!(A.elements[1 .. $]),
+                         Sequence!(B.elements[1 .. $]) )) Interleave;
+}
+
+alias Interleave!( Sequence!(1, 3, 5, 7),
+                   Sequence!(2, 4, 6, 8) ) result;
+
+static assert(isSame!( Sequence!(result),
+                       Sequence!(1, 2, 3, 4, 5, 6, 7, 8) ));
+--------------------
+ */
+template Sequence(items...)
+{
+private:
+    alias SequenceTag   ContainerTag;   // for isSequence
+
+public:
+
+    /**
+     * Returns $(D true) if and only if $(D items) is empty.
+     */
+    enum bool empty = (items.length == 0);
+
+
+    /**
+     * Returns the number of items in the specified $(D items).
+     */
+    enum size_t length = items.length;
+
+
+    /**
+     * The specified $(D items).
+     */
+    alias items elements;
+}
+
+
+private enum SequenceTag { init }
+
+
+/**
+ * Returns $(D true) if and only if $(D entity) is an instance of the
+ * $(D Sequence) template.
+ *
+ * Example:
+ *  Switching the behavior of a template by seeing if the argument is an
+ *  instance of the $(D Sequence) template or not.
+--------------------
+template toSequence(alias item)
+    if (isSequence!(item))
+{
+    alias item toSequence;  // already a Sequence
+}
+
+template toSequence(items...)
+{
+    alias Sequence!(items) toSequence;
+}
+--------------------
+ */
+template isSequence(alias entity)
+{
+    enum isSequence = is(entity.ContainerTag == SequenceTag);
+}
+
+
+/**
+ * ditto
+ */
+template isSequence(entity...)
+{
+    enum isSequence = false;
+}
+
+
+unittest    // positive
+{
+    static assert(isSequence!( Sequence!() ));
+    static assert(isSequence!( Sequence!(1) ));
+    static assert(isSequence!( Sequence!(1, 2, 3, 4) ));
+    static assert(isSequence!( Sequence!(int, real, string) ));
+}
+
+unittest    // negative
+{
+    static struct Local {}
+    static assert(!isSequence!( Sequence ));    // not an instance
+    static assert(!isSequence!( Local ));
+    static assert(!isSequence!( int ));
+    static assert(!isSequence!( 4, 3, 2, 1 ));
+}
+
+
+
+//----------------------------------------------------------------------------//
+// template StaticSetIntersection       (A, B, less)
+// template StaticSetUnion              (A, B, less)
+// template StaticSetDifference         (A, B, less)
+// template StaticSetSymmetricDifference(A, B, less)
+//----------------------------------------------------------------------------//
+
+
+// Adaptively selects the appropriate comparison template for A.
+private template adaptiveLess(alias A)
+{
+    static if (__traits(hasMember, A, "ordering"))
+    {
+        alias A.ordering adaptiveLess;
+    }
+    else static if (__traits(compiles, standardLess!(A.elements)))
+    {
+        alias standardLess adaptiveLess;
+    }
+    else
+    {
+        alias genericLess adaptiveLess;
+    }
+}
+
+
+/**
+ * Constructs a sorted static tuple consisting of the set intersection of the
+ * two sorted static sequences $(D A) and $(D B).
+ *
+ * If $(D A) and $(D B) contains $(D m) and $(D n) duplicates of the same
+ * element respectively, the resulting union will contain $(D min(m,n))
+ * duplicates.
+ *
+ * Params:
+ *     A = $(D Sequence) whose elements $(D A.elements) are sorted in the
+ *         increasing order in terms of $(D less).
+ *     B = ditto.
+ *  less = Comparison template function (optional).
+ *
+ * Returns:
+ *  Static tuple copmosed only of the common elements of $(D A) and $(D B).
+ *
+ * Example:
+--------------------
+alias Sequence!(2, 3, 5, 7) primes;
+alias Sequence!(1, 3, 5, 7) odds;
+
+alias StaticSetUnion!(primes, odds) oddPrimes;
+static assert([ oddPrimes ] == [ 3, 5, 7 ]);
+--------------------
+ */
+template StaticSetIntersection(
+        alias A, alias B, alias less = adaptiveLess!(A))
+{
+    alias StaticSetIntersectionImpl!(less)
+         .Intersection!(A.elements)
+                 .With!(B.elements)     StaticSetIntersection;
+}
+
+private template StaticSetIntersectionImpl(alias less)
+{
+    template Intersection()
+    {
+        template With(B...)
+        {
+            alias TypeTuple!() With;
+        }
+    }
+
+    template Intersection(A...)
+    {
+        template With()
+        {
+            alias TypeTuple!() With;
+        }
+
+        template With(B...)
+        {
+            static if (less!(A[0], B[0]))
+            {
+                alias Intersection!(A[1 .. $]).With!(B) With;
+            }
+            else static if (less!(B[0], A[0]))
+            {
+                alias Intersection!(A).With!(B[1 .. $]) With;
+            }
+            else
+            {
+                alias TypeTuple!(A[0], Intersection!(A[1 .. $])
+                                              .With!(B[1 .. $])) With;
+            }
+        }
+    }
+}
+
+
+unittest
+{
+    alias StaticSetIntersection!(Sequence!(1, 1, 2, 3, 5),
+                                 Sequence!(1, 3, 5, 7, 9)) A;
+    static assert(MatchTuple!(A).With!(1, 3, 5));
+
+    alias StaticSetIntersection!(Sequence!("abc", "def", "ghi"),
+                                 Sequence!("123", "abc", "xyz")) B;
+    static assert(MatchTuple!(B).With!("abc"));
+}
+
+unittest    // empty intersection
+{
+    alias StaticSetIntersection!(Sequence!(1, 3, 5, 7, 9),
+                                 Sequence!(0, 2, 4, 6, 8)) A;
+    static assert(A.length == 0);
+}
+
+unittest    // empty \cap sth
+{
+    alias StaticSetIntersection!(Sequence!(), Sequence!(1, 2, 3)) A;
+    static assert(A.length == 0);
+
+    alias StaticSetIntersection!(Sequence!(1, 2, 3), Sequence!()) B;
+    static assert(B.length == 0);
+
+    alias StaticSetIntersection!(Sequence!(), Sequence!()) C;
+    static assert(C.length == 0);
+}
+
+unittest    // duplicate elements
+{
+    alias StaticSetIntersection!(Sequence!(1, 1, 1, 2, 2, 2),
+                                 Sequence!(1, 2, 2, 3, 4, 5)) A;
+    static assert(MatchTuple!(A).With!(1, 2, 2));
+
+    alias StaticSetIntersection!(Sequence!(1, 2, 2, 3, 4, 5),
+                                 Sequence!(1, 1, 1, 2, 2, 2)) B;
+    static assert(MatchTuple!(B).With!(1, 2, 2));
+}
+
+
+
+/**
+ * Constructs a sorted static tuple consisting of the set union of the two
+ * sorted sequences $(D A) and $(D B).
+ *
+ * If $(D A) and $(D B) contains $(D m) and $(D n) duplicates of the same
+ * element respectively, the resulting union will contain $(D max(m,n))
+ * duplicates.
+ *
+ * Params:
+ *     A = $(D Sequence) whose elements $(D A.elements) are sorted in the
+ *         increasing order in terms of $(D less).
+ *     B = ditto.
+ *  less = Comparison template function (optional).
+ *
+ * Returns:
+ *  Static tuple composed of the elements in $(D A) and/or $(D B).
+ *
+ * Example:
+ *  Union of the first four primes and the first four odd numbers.
+--------------------
+alias Sequence!(2, 3, 5, 7) primes;
+alias Sequence!(1, 3, 5, 7) odds;
+
+alias StaticSetUnion!(primes, odds) primesAndOdds;
+static assert([ primesAndOdds ] == [ 1, 2, 3, 5, 7 ]);
+--------------------
+ */
+template StaticSetUnion(
+        alias A, alias B, alias less = adaptiveLess!(A))
+{
+    alias StaticSetUnionImpl!(less)
+            .Union!(A.elements)
+             .With!(B.elements)     StaticSetUnion;
+}
+
+private template StaticSetUnionImpl(alias less)
+{
+    template Union()
+    {
+        template With(B...)
+        {
+            alias B With;
+        }
+    }
+
+    template Union(A...)
+    {
+        template With()
+        {
+            alias A With;
+        }
+
+        template With(B...)
+        {
+            static if (less!(A[0], B[0]))
+            {
+                alias TypeTuple!(A[0], Union!(A[1 .. $])
+                                       .With!(B[0 .. $])) With;
+            }
+            else static if (less!(B[0], A[0]))
+            {
+                alias TypeTuple!(B[0], Union!(A[0 .. $])
+                                       .With!(B[1 .. $])) With;
+            }
+            else
+            {
+                alias TypeTuple!(A[0], Union!(A[1 .. $])
+                                       .With!(B[1 .. $])) With;
+            }
+        }
+    }
+}
+
+
+unittest
+{
+    alias StaticSetUnion!(Sequence!(1, 1, 3, 5, 8),
+                          Sequence!(1, 3, 5, 7, 9)) A;
+    static assert(MatchTuple!(A).With!(1, 1, 3, 5, 7, 8, 9));
+
+    alias StaticSetUnion!(Sequence!("abc", "def", "ghi"),
+                          Sequence!("def", "ghi", "jkl")) B;
+    static assert(MatchTuple!(B).With!("abc", "def", "ghi", "jkl"));
+}
+
+unittest    // empty \cup sth
+{
+    alias Sequence!() E;
+    alias Sequence!(1, 2, 3, 4) A;
+
+    alias StaticSetUnion!(E, A) K;
+    static assert(MatchTuple!(K).With!(A.elements));
+
+    alias StaticSetUnion!(A, E) L;
+    static assert(MatchTuple!(L).With!(A.elements));
+
+    alias StaticSetUnion!(E, E) M;
+    static assert(MatchTuple!(M).With!(E.elements));
+}
+
+unittest    // duplicate elements
+{
+    alias StaticSetUnion!(Sequence!(1, 1, 1, 2, 2, 2),
+                          Sequence!(1, 2, 2, 3, 4, 5)) A;
+    static assert(MatchTuple!(A).With!(1, 1, 1, 2, 2, 2, 3, 4, 5));
+
+    alias StaticSetUnion!(Sequence!(1, 2, 2, 3, 4, 5),
+                          Sequence!(1, 1, 1, 2, 2, 2)) B;
+    static assert(MatchTuple!(B).With!(1, 1, 1, 2, 2, 2, 3, 4, 5));
+}
+
+
+
+/**
+ * Constructs a sorted static tuple consisting of the set difference of $(D A)
+ * with respect to $(D B).
+ *
+ * Params:
+ *     A = $(D Sequence) whose elements $(D A.elements) are sorted in the
+ *         increasing order in terms of $(D less).
+ *     B = ditto.
+ *  less = Comparison template function (optional).
+ *
+ * Returns:
+ *  Static tuple composed of the elements in $(D A) except ones in $(D B).
+ *
+ * Example:
+ *  { 5,15,25 } is only contained in $(D A), hence the difference of $(D A)
+ *  with respect to $(D B) is { 5,15,25 }.
+--------------------
+alias Sequence!( 5, 10, 15, 20, 25) A;
+alias Sequence!(10, 20, 30, 40, 50) B;
+
+alias StaticSetDifference!(A, B) diff;
+static assert([ diff ] == [ 5, 15, 25 ]);
+--------------------
+ */
+template StaticSetDifference(
+        alias A, alias B, alias less = adaptiveLess!(A))
+{
+    alias StaticSetDifferenceImpl!(less)
+            .Difference!(A.elements)
+                    .To!(B.elements)    StaticSetDifference;
+}
+
+private template StaticSetDifferenceImpl(alias less)
+{
+    template Difference()
+    {
+        template To(B...)
+        {
+            alias TypeTuple!() To;
+        }
+    }
+
+    template Difference(A...)
+    {
+        template To()
+        {
+            alias A To;
+        }
+
+        template To(B...)
+        {
+            static if (less!(A[0], B[0]))
+            {
+                alias TypeTuple!(A[0], Difference!(A[1 .. $])
+                                              .To!(B[0 .. $])) To;
+            }
+            else static if (less!(B[0], A[0]))
+            {
+                alias Difference!(A[0 .. $]).To!(B[1 .. $]) To;
+            }
+            else
+            {
+                alias Difference!(A[1 .. $]).To!(B[1 .. $]) To;
+            }
+        }
+    }
+}
+
+
+unittest
+{
+    alias StaticSetDifference!(Sequence!(1, 1, 2, 3, 5),
+                               Sequence!(1, 3, 5, 7, 9)) A;
+    static assert(MatchTuple!(A).With!(1, 2));
+
+    alias StaticSetDifference!(Sequence!("abc", "def", "ghi"),
+                               Sequence!("def", "ghi", "jkl")) B;
+    static assert(MatchTuple!(B).With!("abc"));
+}
+
+unittest    // empty
+{
+    alias StaticSetDifference!(Sequence!(), Sequence!(1, 2, 3, 4)) A;
+    static assert(A.length == 0);
+
+    alias StaticSetDifference!(Sequence!(1, 2, 3, 4), Sequence!()) B;
+    static assert(MatchTuple!(B).With!(1, 2, 3, 4));
+
+    alias StaticSetDifference!(Sequence!(), Sequence!()) C;
+    static assert(C.length == 0);
+}
+
+unittest    // duplicate elements
+{
+    alias StaticSetDifference!(Sequence!(1, 1, 1, 2, 2, 2),
+                               Sequence!(      1,       2)) A;
+    static assert(MatchTuple!(A).With!(1, 1, 2, 2));
+
+    alias StaticSetDifference!(Sequence!(1, 1, 1, 2, 2, 2),
+                               Sequence!(1, 1, 1, 1, 2, 2)) B;
+    static assert(MatchTuple!(B).With!(2));
+
+    alias StaticSetDifference!(Sequence!(1, 2, 3, 4, 5, 6),
+                               Sequence!(1, 1, 1, 2, 2, 2)) C;
+    static assert(MatchTuple!(C).With!(3, 4, 5, 6));
+}
+
+
+
+/**
+ * Constructs a sorted static tuple consisting of the set symmetric difference
+ * (or the XOR) of two sorted sequences $(D A) and $(D B).
+ *
+ * Params:
+ *     A = $(D Sequence) whose elements $(D A.elements) are sorted in the
+ *         increasing order in terms of $(D less).
+ *     B = ditto.
+ *  less = Comparison template function (optional).
+ *
+ * Returns:
+ *  Static tuple composed of the elements in $(D A) and $(D B) except ones
+ *  in the both sequences.
+ *
+ * Example:
+ *  The common element $(D int) does not appear in the result.
+--------------------
+alias Sequence!(bool, int, void*) Scalars;
+alias Sequence!(byte, int, short) Integers;
+alias StaticSetSymmetricDifference!(Scalars, Integers) Result;
+
+static assert(is(Result == TypeTuple!(bool, byte, short, void*)));
+--------------------
+ */
+template StaticSetSymmetricDifference(
+        alias A, alias B, alias less = adaptiveLess!(A))
+{
+    alias StaticSetSymmetricDifferenceImpl!(less)
+            .Difference!(A.elements)
+                  .With!(B.elements)    StaticSetSymmetricDifference;
+}
+
+private template StaticSetSymmetricDifferenceImpl(alias less)
+{
+    template Difference()
+    {
+        template With(B...)
+        {
+            alias B With;
+        }
+    }
+
+    template Difference(A...)
+    {
+        template With()
+        {
+            alias A With;
+        }
+
+        template With(B...)
+        {
+            static if (less!(A[0], B[0]))
+            {
+                alias TypeTuple!(A[0], Difference!(A[1 .. $])
+                                            .With!(B[0 .. $])) With;
+            }
+            else static if (less!(B[0], A[0]))
+            {
+                alias TypeTuple!(B[0], Difference!(A[0 .. $])
+                                            .With!(B[1 .. $])) With;
+            }
+            else
+            {
+                alias Difference!(A[1 .. $]).With!(B[1 .. $]) With;
+            }
+        }
+    }
+}
+
+
+unittest
+{
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 1, 2, 3, 5),
+            Sequence!(1, 3, 5, 7, 9)) A;
+    static assert(MatchTuple!(A).With!(1, 2, 7, 9));
+
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 3, 5, 7, 9),
+            Sequence!(1, 1, 2, 3, 5)) revA;
+    static assert(MatchTuple!(revA).With!(1, 2, 7, 9));
+
+    alias StaticSetSymmetricDifference!(
+            Sequence!("abc", "def", "ghi"),
+            Sequence!("def", "ghi", "jkl")) B;
+    static assert(MatchTuple!(B).With!("abc", "jkl"));
+}
+
+unittest    // empty
+{
+    alias StaticSetSymmetricDifference!(
+            Sequence!(), Sequence!(1, 2, 3, 4)) A;
+    static assert(MatchTuple!(A).With!(1, 2, 3, 4));
+
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 2, 3, 4), Sequence!()) B;
+    static assert(MatchTuple!(B).With!(1, 2, 3, 4));
+
+    alias StaticSetSymmetricDifference!(Sequence!(), Sequence!()) C;
+    static assert(C.length == 0);
+}
+
+unittest    // duplicate elements
+{
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 1, 1, 2, 2, 2),
+            Sequence!(1, 2, 3, 4, 5   )) A;
+    static assert(MatchTuple!(A).With!(1, 1, 2, 2, 3, 4, 5));
+
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 2, 3, 4, 5   ),
+            Sequence!(1, 1, 1, 2, 2, 2)) revA;
+    static assert(MatchTuple!(revA).With!(1, 1, 2, 2, 3, 4, 5));
+
+    alias StaticSetSymmetricDifference!(
+            Sequence!(1, 1, 1, 2, 2, 2),
+            Sequence!(2, 2, 2, 3, 3   )) B;
+    static assert(MatchTuple!(B).With!(1, 1, 1, 3, 3));
+}
+
+
+
 //----------------------------------------------------------------------------//
 // Tiarg Comparators
 //----------------------------------------------------------------------------//
-// template      standardLess(items...);
-// template heterogeneousLess(items...);
-// template            isSame(items...);
+// template standardLess(items...);
+// template  genericLess(items...);
+// template       isSame(items...);
 //----------------------------------------------------------------------------//
 
 
@@ -162,6 +849,10 @@ private template MergeSort(alias less, items...)
  *  items = Compile-time constants or expressions to compare.  Instantiation
  *          fails if $(D items) contains only zero or one entity, or if it
  *          contains any non-comparable entities.
+ *
+ * Returns:
+ *  $(D true) if and only if $(D items[0] < ... < items[$ - 1]).  Returns
+ *  $(D false) otherwise.
  *
  * Example:
  *  In the following code, a generic algorithm $(D TrimIncreasingPart) takes
@@ -185,22 +876,21 @@ static assert([ result ] == [ 3.5, 2, 1 ]);
 --------------------
  */
 template standardLess(items...)
+    if (items.length >= 2)
 {
-    static assert(items.length >= 2);
-
     static if (items.length > 2)
     {
-        enum bool standardLess = standardLess!(items[0 .. 2]) &&
-                                 standardLess!(items[1 .. $]);
+        enum standardLess = standardLess!(items[0 .. 2]) &&
+                            standardLess!(items[1 .. $]);
     }
     else
     {
         // NOTE: Use static this so the expression is evaluated right now.
 
         static if (items[0] < items[1])
-            enum bool standardLess =  true;
+            enum standardLess =  true;
         else
-            enum bool standardLess = false;
+            enum standardLess = false;
     }
 }
 
@@ -236,73 +926,53 @@ unittest    // errors
 
 
 /**
- * Compares compile-time entities $(D items...) by their mangled name.
- * The tuple $(D items) can consist of any kind of compile-time entities
+ * Compares compile-time entities $(D items...) by their mangled names.
+ * The tuple $(D items) may consist of any kind of compile-time entities
  * (unlike the restrictive $(D standardLess) template).
  *
  * The point of this template is to allow comparison against types and
  * symbols so that tuples of such kind of entities can be normalized by
- * sorting.  See the example below.
- *
- * Note that the result of comparison may be counter-intuitive since mangled
- * names are used.  For example, $(D heterogeneousLess!(-1, 1)) evaluates to
- * $(D false) whereas -1 is mathematically less than 1.  This is because the
- * mangled names for -1 and 1 are "ViN1" and "Vi1" respectively.
+ * sorting.  The example below sorts type tuples with $(D genericLess).
  *
  * Params:
  *  items = Two or more compile time entities of any kind.
  *
  * Returns:
- *  $(D true) if and only if $(D items[0] < ... < items[$ - 1]) in terms of
- *  their mangled names.  Returns $(D false) otherwise.
+ *  $(D true) if and only if $(D items[0] < ... < items[$ - 1]) is
+ *  satisfied in terms of their mangled names.  Returns $(D false)
+ *  otherwise.
  *
  * Example:
- *  The following example sorts type tuple with $(D StaticSort) and
- *  $(D heterogeneousLess).
+ *  Sorting type tuples.
 --------------------
-alias StaticSort!(heterogeneousLess,  int,  real, short) A;
-alias StaticSort!(heterogeneousLess, real, short,   int) B;
+alias StaticSort!(genericLess,  int,  real, short) A;
+alias StaticSort!(genericLess, real, short,   int) B;
 
 // The two type tuples are sorted (or normalized).
 static assert(is(A == TypeTuple!(real, int, short)));
 static assert(is(B == TypeTuple!(real, int, short)));
 --------------------
  */
-template heterogeneousLess(items...)
+template genericLess(items...)
+    if (items.length >= 2)
 {
-    static assert(items.length >= 2);
-
     static if (items.length > 2)
-        enum bool heterogeneousLess = heterogeneousLess!(items[0 .. 2]) &&
-                                      heterogeneousLess!(items[1 .. $]);
+        enum genericLess = genericLess!(items[0 .. 2]) &&
+                           genericLess!(items[1 .. $]);
     else
-        enum bool heterogeneousLess = (Id!(items[0]) < Id!(items[1]));
-}
-
-
-// Returns the mangled name of entities.
-private template Id(entities...)
-{
-    // TODO: optimize
-    enum string Id = Entity!(entities).ToType.mangleof;
-}
-
-
-// Helper template for obtaining the mangled name of entities.
-private template Entity(entities...)
-{
-    struct ToType {}
+        enum genericLess = (metaEntity!(items[0]).id <
+                            metaEntity!(items[1]).id);
 }
 
 
 unittest    // integers
 {
-    static assert( heterogeneousLess!(1, 2));
-    static assert(!heterogeneousLess!(2, 1));
-    static assert( heterogeneousLess!(1, 2, 3, 4));
-    static assert(!heterogeneousLess!(1, 3, 2, 4));
-    static assert(!heterogeneousLess!(-1,  1));
-    static assert( heterogeneousLess!( 1, -1));
+    static assert( genericLess!(1, 2));
+    static assert(!genericLess!(2, 1));
+    static assert( genericLess!(1, 2, 3, 4));
+    static assert(!genericLess!(1, 3, 2, 4));
+    static assert(!genericLess!(-1,  1));
+    static assert( genericLess!( 1, -1));
 }
 
 unittest    // types
@@ -311,54 +981,24 @@ unittest    // types
     static assert(real.mangleof == "e");
     static assert( int.mangleof == "i");
     static assert(bool.mangleof == "b");
-    static assert( heterogeneousLess!(char, real,  int));
-    static assert(!heterogeneousLess!(bool, real, char));
+    static assert( genericLess!(char, real,  int));
+    static assert(!genericLess!(bool, real, char));
 
     struct A {}
     struct B {}
     struct C {}
-    static assert( heterogeneousLess!(A, B));
-    static assert( heterogeneousLess!(B, C));
-    static assert( heterogeneousLess!(A, B, C));
-    static assert(!heterogeneousLess!(B, C, A));
+    static assert( genericLess!(A, B));
+    static assert( genericLess!(B, C));
+    static assert( genericLess!(A, B, C));
+    static assert(!genericLess!(B, C, A));
 }
 
 unittest    // symbols
 {
-    static assert( heterogeneousLess!(standardLess, heterogeneousLess));
-    static assert(!heterogeneousLess!(standardLess, int));
+    static assert( genericLess!( genericLess, standardLess));
+    static assert(!genericLess!(standardLess, int));
 }
 
-
-
-// Helper templates for isSame!(...) below.
-
-private template isSame_(A, B)
-{
-    enum isSame_ = is(A == B);
-}
-
-private template isSame_(alias a, alias b)
-{
-    static if (is(typeof(a) A) && is(typeof(b) B))
-    {
-        static if (__traits(compiles, interpretNow!(bool, a == b) ))
-            enum isSame_ = is(A == B) && a == b;
-        else
-            enum isSame_ = __traits(isSame, a, b);
-    }
-    else
-    {
-        enum isSame_ = __traits(isSame, a, b);
-    }
-}
-
-private template isSame_(items...)
-    if (items.length == 2)
-{
-    enum isSame_ = is(Entity!(items[0]).ToType ==
-                      Entity!(items[1]).ToType);
-}
 
 
 /**
@@ -489,589 +1129,33 @@ unittest    // compare three or more entities
     static assert(!isSame!(1, 1, 1, int));
 }
 
-unittest    // BUG: enum == enum?
-{
-    enum A { init }
-    enum B { init }
 
-    static assert( isSame!(A, A));
-    static assert( isSame!(B, B));
-    static assert(!isSame!(A, B));
+// isSame detail
+
+private template isSame_(A, B)
+{
+    enum isSame_ = is(A == B);
 }
 
-
-
-//----------------------------------------------------------------------------//
-// template StaticSetIntersection       (A, B, less)
-// template StaticSetUnion              (A, B, less)
-// template StaticSetDifference         (A, B, less)
-// template StaticSetSymmetricDifference(A, B, less)
-//
-// template StaticUniq                  (items...)
-//----------------------------------------------------------------------------//
-
-
-version (unittest)
-private template Pack(items...)
+private template isSame_(alias a, alias b)
 {
-    enum bool empty = (items.length == 0);
-    alias items elements;
-}
-
-
-// Adaptively selects the appropriate comparison template for A.
-private template adaptiveLess(alias A)
-{
-    static if (__traits(hasMember, A, "ordering"))
+    static if (is(typeof(a) A) && is(typeof(b) B))
     {
-        alias A.ordering adaptiveLess;
-    }
-    else static if (__traits(compiles, standardLess!(A.elements)))
-    {
-        alias standardLess adaptiveLess;
-    }
-    else
-    {
-        alias heterogeneousLess adaptiveLess;
-    }
-}
-
-
-/**
- * Constructs a sorted static tuple consisting of the set intersection of the
- * two sorted static containers $(D A) and $(D B).
- *
- * If $(D A) and $(D B) contains $(D m) and $(D n) duplicates of the same
- * element respectively, the resulting union will contain $(D min(m,n))
- * duplicates.
- *
- * Params:
- *     A = Static container whose elements ($(D A.elements)) are sorted in
- *         terms of $(D less).
- *     B = ditto.
- *  less = Comparison template function. This argument is automatically chosen
- *         if not specified.
- *
- * Returns:
- *  Static tuple consisting of the intersection of $(D A) and $(D B).
- *
- * Example:
- *  Computing the intersection of two sorted lists.
---------------------
-alias StaticList!(2, 3, 5, 7) primes;
-alias StaticList!(1, 3, 5, 7) odds;
-
-alias StaticSetUnion!(primes, odds) oddPrimes;
-static assert([ oddPrimes ] == [ 3, 5, 7 ]);
---------------------
- */
-template StaticSetIntersection(
-        alias A, alias B, alias less = adaptiveLess!(A))
-{
-    alias StaticSetIntersectionImpl!(less)
-         .Intersection!(A.elements)
-                 .With!(B.elements)     StaticSetIntersection;
-}
-
-private template StaticSetIntersectionImpl(alias less)
-{
-    template Intersection()
-    {
-        template With(B...)
-        {
-            alias TypeTuple!() With;
-        }
-    }
-
-    template Intersection(A...)
-    {
-        template With()
-        {
-            alias TypeTuple!() With;
-        }
-
-        template With(B...)
-        {
-            static if (less!(A[0], B[0]))
-            {
-                alias Intersection!(A[1 .. $]).With!(B) With;
-            }
-            else static if (less!(B[0], A[0]))
-            {
-                alias Intersection!(A).With!(B[1 .. $]) With;
-            }
-            else
-            {
-                alias TypeTuple!(A[0], Intersection!(A[1 .. $])
-                                              .With!(B[1 .. $])) With;
-            }
-        }
-    }
-}
-
-
-unittest
-{
-    alias StaticSetIntersection!(Pack!(1, 1, 2, 3, 5),
-                                 Pack!(1, 3, 5, 7, 9)) A;
-    static assert(MatchTuple!(A).With!(1, 3, 5));
-
-    alias StaticSetIntersection!(Pack!("abc", "def", "ghi"),
-                                 Pack!("123", "abc", "xyz")) B;
-    static assert(MatchTuple!(B).With!("abc"));
-}
-
-unittest    // empty intersection
-{
-    alias StaticSetIntersection!(Pack!(1, 3, 5, 7, 9),
-                                 Pack!(0, 2, 4, 6, 8)) A;
-    static assert(A.length == 0);
-}
-
-unittest    // empty \cap sth
-{
-    alias StaticSetIntersection!(Pack!(), Pack!(1, 2, 3)) A;
-    static assert(A.length == 0);
-
-    alias StaticSetIntersection!(Pack!(1, 2, 3), Pack!()) B;
-    static assert(B.length == 0);
-
-    alias StaticSetIntersection!(Pack!(), Pack!()) C;
-    static assert(C.length == 0);
-}
-
-unittest    // duplicate elements
-{
-    alias StaticSetIntersection!(Pack!(1, 1, 1, 2, 2, 2),
-                                 Pack!(1, 2, 2, 3, 4, 5)) A;
-    static assert(MatchTuple!(A).With!(1, 2, 2));
-
-    alias StaticSetIntersection!(Pack!(1, 2, 2, 3, 4, 5),
-                                 Pack!(1, 1, 1, 2, 2, 2)) B;
-    static assert(MatchTuple!(B).With!(1, 2, 2));
-}
-
-
-
-/**
- * Constructs a sorted static tuple consisting of the set union of the two
- * sorted static containers $(D A) and $(D B).
- *
- * If $(D A) and $(D B) contains $(D m) and $(D n) duplicates of the same
- * element respectively, the resulting union will contain $(D max(m,n))
- * duplicates.
- *
- * Params:
- *     A = Static container whose elements ($(D A.elements)) are sorted in
- *         terms of $(D less).
- *     B = ditto.
- *  less = Comparison template function. This argument is automatically chosen
- *         if not specified.
- *
- * Returns:
- *  Static tuple consisting of the union of $(D A) and $(D B).
- *
- * Example:
- *  Union of the first four primes and the first four odd numbers.
---------------------
-alias StaticList!(2, 3, 5, 7) primes;
-alias StaticList!(1, 3, 5, 7) odds;
-
-alias StaticSetUnion!(primes, odds) primesAndOdds;
-static assert([ primesAndOdds ] == [ 1, 2, 3, 5, 7 ]);
---------------------
- */
-template StaticSetUnion(
-        alias A, alias B, alias less = adaptiveLess!(A))
-{
-    alias StaticSetUnionImpl!(less)
-            .Union!(A.elements)
-             .With!(B.elements)     StaticSetUnion;
-}
-
-private template StaticSetUnionImpl(alias less)
-{
-    template Union()
-    {
-        template With(B...)
-        {
-            alias B With;
-        }
-    }
-
-    template Union(A...)
-    {
-        template With()
-        {
-            alias A With;
-        }
-
-        template With(B...)
-        {
-            static if (less!(A[0], B[0]))
-            {
-                alias TypeTuple!(A[0], Union!(A[1 .. $])
-                                       .With!(B[0 .. $])) With;
-            }
-            else static if (less!(B[0], A[0]))
-            {
-                alias TypeTuple!(B[0], Union!(A[0 .. $])
-                                       .With!(B[1 .. $])) With;
-            }
-            else
-            {
-                alias TypeTuple!(A[0], Union!(A[1 .. $])
-                                       .With!(B[1 .. $])) With;
-            }
-        }
-    }
-}
-
-
-unittest
-{
-    alias StaticSetUnion!(Pack!(1, 1, 3, 5, 8),
-                          Pack!(1, 3, 5, 7, 9)) A;
-    static assert(MatchTuple!(A).With!(1, 1, 3, 5, 7, 8, 9));
-
-    alias StaticSetUnion!(Pack!("abc", "def", "ghi"),
-                          Pack!("def", "ghi", "jkl")) B;
-    static assert(MatchTuple!(B).With!("abc", "def", "ghi", "jkl"));
-}
-
-unittest    // empty \cup sth
-{
-    alias Pack!() E;
-    alias Pack!(1, 2, 3, 4) A;
-
-    alias StaticSetUnion!(E, A) K;
-    static assert(MatchTuple!(K).With!(A.elements));
-
-    alias StaticSetUnion!(A, E) L;
-    static assert(MatchTuple!(L).With!(A.elements));
-
-    alias StaticSetUnion!(E, E) M;
-    static assert(MatchTuple!(M).With!(E.elements));
-}
-
-unittest    // duplicate elements
-{
-    alias StaticSetUnion!(Pack!(1, 1, 1, 2, 2, 2),
-                          Pack!(1, 2, 2, 3, 4, 5)) A;
-    static assert(MatchTuple!(A).With!(1, 1, 1, 2, 2, 2, 3, 4, 5));
-
-    alias StaticSetUnion!(Pack!(1, 2, 2, 3, 4, 5),
-                          Pack!(1, 1, 1, 2, 2, 2)) B;
-    static assert(MatchTuple!(B).With!(1, 1, 1, 2, 2, 2, 3, 4, 5));
-}
-
-
-
-/**
- * Constructs a sorted static tuple consisting of the set difference of $(D A)
- * with respect to $(D B).
- *
- * Params:
- *     A = Static container whose elements ($(D A.elements)) are sorted in
- *         terms of $(D less).
- *     B = ditto.
- *  less = Comparison template function. This argument is automatically chosen
- *         if not specified.
- *
- * Returns:
- *  Static tuple consisting of the set difference of $(D A) with respect to
- *  $(D B).
- *
- * Example:
- *  { 5,15,25 } is only contained in $(D A), so the difference of $(D A)
- *  with respect to $(D B) is { 5,15,25 }.
---------------------
-alias StaticList!( 5, 10, 15, 20, 25) A;
-alias StaticList!(10, 20, 30, 40, 50) B;
-
-alias StaticSetDifference!(A, B) diff;
-static assert([ diff ] == [ 5, 15, 25 ]);
---------------------
- */
-template StaticSetDifference(
-        alias A, alias B, alias less = adaptiveLess!(A))
-{
-    alias StaticSetDifferenceImpl!(less)
-            .Difference!(A.elements)
-                    .To!(B.elements)    StaticSetDifference;
-}
-
-private template StaticSetDifferenceImpl(alias less)
-{
-    template Difference()
-    {
-        template To(B...)
-        {
-            alias TypeTuple!() To;
-        }
-    }
-
-    template Difference(A...)
-    {
-        template To()
-        {
-            alias A To;
-        }
-
-        template To(B...)
-        {
-            static if (less!(A[0], B[0]))
-            {
-                alias TypeTuple!(A[0], Difference!(A[1 .. $])
-                                              .To!(B[0 .. $])) To;
-            }
-            else static if (less!(B[0], A[0]))
-            {
-                alias Difference!(A[0 .. $]).To!(B[1 .. $]) To;
-            }
-            else
-            {
-                alias Difference!(A[1 .. $]).To!(B[1 .. $]) To;
-            }
-        }
-    }
-}
-
-
-unittest
-{
-    alias StaticSetDifference!(Pack!(1, 1, 2, 3, 5),
-                               Pack!(1, 3, 5, 7, 9)) A;
-    static assert(MatchTuple!(A).With!(1, 2));
-
-    alias StaticSetDifference!(Pack!("abc", "def", "ghi"),
-                               Pack!("def", "ghi", "jkl")) B;
-    static assert(MatchTuple!(B).With!("abc"));
-}
-
-unittest    // empty
-{
-    alias StaticSetDifference!(Pack!(), Pack!(1, 2, 3, 4)) A;
-    static assert(A.length == 0);
-
-    alias StaticSetDifference!(Pack!(1, 2, 3, 4), Pack!()) B;
-    static assert(MatchTuple!(B).With!(1, 2, 3, 4));
-
-    alias StaticSetDifference!(Pack!(), Pack!()) C;
-    static assert(C.length == 0);
-}
-
-unittest    // duplicate elements
-{
-    alias StaticSetDifference!(Pack!(1, 1, 1, 2, 2, 2),
-                               Pack!(      1,       2)) A;
-    static assert(MatchTuple!(A).With!(1, 1, 2, 2));
-
-    alias StaticSetDifference!(Pack!(1, 1, 1, 2, 2, 2),
-                               Pack!(1, 1, 1, 1, 2, 2)) B;
-    static assert(MatchTuple!(B).With!(2));
-
-    alias StaticSetDifference!(Pack!(1, 2, 3, 4, 5, 6),
-                               Pack!(1, 1, 1, 2, 2, 2)) C;
-    static assert(MatchTuple!(C).With!(3, 4, 5, 6));
-}
-
-
-
-/**
- * Constructs a sorted static tuple consisting of the set symmetric difference
- * (or the XOR) of two sorted ranges $(D A) and $(D B).
- *
- * Params:
- *     A = Static container whose elements ($(D A.elements)) are sorted in
- *         terms of $(D less).
- *     B = ditto.
- *  less = Comparison template function. This argument is automatically chosen
- *         if not specified.
- *
- * Returns:
- *  Static tuple consisting of the set symmetric difference of $(D A) and
- *  $(D B).
- *
- * Example:
- *  The common element $(D int) does not appear in the result.
---------------------
-alias StaticList!(bool, int, void*) Scalars;
-alias StaticList!(byte, int, short) Integers;
-alias StaticSetSymmetricDifference!(Scalars, Integers) Result;
-
-static assert(is(Result == TypeTuple!(bool, byte, short, void*)));
---------------------
- */
-template StaticSetSymmetricDifference(
-        alias A, alias B, alias less = adaptiveLess!(A))
-{
-    alias StaticSetSymmetricDifferenceImpl!(less)
-            .Difference!(A.elements)
-                  .With!(B.elements)    StaticSetSymmetricDifference;
-}
-
-private template StaticSetSymmetricDifferenceImpl(alias less)
-{
-    template Difference()
-    {
-        template With(B...)
-        {
-            alias B With;
-        }
-    }
-
-    template Difference(A...)
-    {
-        template With()
-        {
-            alias A With;
-        }
-
-        template With(B...)
-        {
-            static if (less!(A[0], B[0]))
-            {
-                alias TypeTuple!(A[0], Difference!(A[1 .. $])
-                                            .With!(B[0 .. $])) With;
-            }
-            else static if (less!(B[0], A[0]))
-            {
-                alias TypeTuple!(B[0], Difference!(A[0 .. $])
-                                            .With!(B[1 .. $])) With;
-            }
-            else
-            {
-                alias Difference!(A[1 .. $]).With!(B[1 .. $]) With;
-            }
-        }
-    }
-}
-
-
-unittest
-{
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 1, 2, 3, 5),
-            Pack!(1, 3, 5, 7, 9)) A;
-    static assert(MatchTuple!(A).With!(1, 2, 7, 9));
-
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 3, 5, 7, 9),
-            Pack!(1, 1, 2, 3, 5)) revA;
-    static assert(MatchTuple!(revA).With!(1, 2, 7, 9));
-
-    alias StaticSetSymmetricDifference!(
-            Pack!("abc", "def", "ghi"),
-            Pack!("def", "ghi", "jkl")) B;
-    static assert(MatchTuple!(B).With!("abc", "jkl"));
-}
-
-unittest    // empty
-{
-    alias StaticSetSymmetricDifference!(
-            Pack!(), Pack!(1, 2, 3, 4)) A;
-    static assert(MatchTuple!(A).With!(1, 2, 3, 4));
-
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 2, 3, 4), Pack!()) B;
-    static assert(MatchTuple!(B).With!(1, 2, 3, 4));
-
-    alias StaticSetSymmetricDifference!(Pack!(), Pack!()) C;
-    static assert(C.length == 0);
-}
-
-unittest    // duplicate elements
-{
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 1, 1, 2, 2, 2), Pack!(1, 2, 3, 4, 5)) A;
-    static assert(MatchTuple!(A).With!(1, 1, 2, 2, 3, 4, 5));
-
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 2, 3, 4, 5), Pack!(1, 1, 1, 2, 2, 2)) revA;
-    static assert(MatchTuple!(revA).With!(1, 1, 2, 2, 3, 4, 5));
-
-    alias StaticSetSymmetricDifference!(
-            Pack!(1, 1, 1, 2, 2, 2), Pack!(2, 2, 2, 3, 3)) B;
-    static assert(MatchTuple!(B).With!(1, 1, 1, 3, 3));
-}
-
-
-
-/**
- * Removes any consecutive group of duplicate elements in $(D items) except
- * the first element of each group.
- *
- * Params:
- *  items = Tuple of zero or more compile-time entities.
- *
- * Returns:
- *  $(D items) without any consecutive duplicate elements.
- *
- * Example:
---------------------
-alias StaticUniq!(1, 2, 3, 3, 4, 4, 4, 2, 2) uniq;
-static assert(MatchTuple!(uniq).With!(1, 2, 3, 4, 2));
---------------------
- */
-template StaticUniq(items...)
-{
-    static if (items.length > 1)
-    {
-        static if (isSame!(items[0], items[1]))
-            alias            StaticUniq!(items[1 .. $])  StaticUniq;
+        static if (__traits(compiles, interpretNow!(bool, a == b)))
+            enum isSame_ = is(A == B) && (a == b);
         else
-            alias TypeTuple!(items[0],
-                             StaticUniq!(items[1 .. $])) StaticUniq;
+            enum isSame_ = __traits(isSame, a, b);
     }
     else
     {
-        alias items StaticUniq;
+        enum isSame_ = __traits(isSame, a, b);
     }
 }
 
-unittest
+private template isSame_(items...)
+    if (items.length == 2)
 {
-    alias StaticUniq!(       ) uniq___;
-    alias StaticUniq!(1      ) uniq1__;
-    alias StaticUniq!(1, 2, 3) uniq123;
-    alias StaticUniq!(1, 1, 1) uniq111;
-    alias StaticUniq!(1, 1, 2) uniq112;
-    alias StaticUniq!(1, 2, 2) uniq122;
-    alias StaticUniq!(1, 2, 1) uniq121;
-
-    static assert(uniq___.length == 0);
-    static assert(uniq1__.length == 1);
-    static assert(uniq123.length == 3);
-    static assert(uniq111.length == 1);
-    static assert(uniq112.length == 2);
-    static assert(uniq122.length == 2);
-    static assert(uniq121.length == 3);
-
-    static assert([ uniq1__ ] == [ 1       ]);
-    static assert([ uniq123 ] == [ 1, 2, 3 ]);
-    static assert([ uniq111 ] == [ 1       ]);
-    static assert([ uniq112 ] == [ 1,    2 ]);
-    static assert([ uniq122 ] == [ 1, 2    ]);
-    static assert([ uniq121 ] == [ 1, 2, 1 ]);
-}
-
-
-
-//----------------------------------------------------------------------------//
-// Static List ?    (std.typelist)
-//----------------------------------------------------------------------------//
-
-template StaticList(items...)
-{
-    enum empty  = (items.length == 0);
-    enum length = items.length;
-    alias items elements;
-
-    static if (items.length > 0)
-    {
-        alias StaticList!(items[1 .. $]) tail;
-    }
+    enum isSame_ = (metaEntity!(items[0]) == metaEntity!(items[1]));
 }
 
 
@@ -1079,67 +1163,51 @@ template StaticList(items...)
 //----------------------------------------------------------------------------//
 // Static Set
 //----------------------------------------------------------------------------//
-// template StaticSet(items...)
+// enum StaticSet   staticSet!(items...);        // constructor
+//
+// struct StaticSet(items...)
 // {
 //     enum bool   empty;
 //     enum size_t length;
 //     alias       elements;
-//     alias       ordering;
 //
-//     template    equals   (rhs);
-//     template    contains (rhs);
+//     auto        add              (items...);
+//     auto        remove           (items...);
 //
-//     template    add      (items);
-//     template    remove   (items);
+//     bool        opEquals         (rhs);
+//     bool        opBinary!"in"    (rhs);      // is subset of ...
+//     bool        contains         (items...); // contains ...
 //
-//     template    intersection        (rhs);
-//     template    union_              (rhs);
-//     template    difference          (rhs);
-//     template    symmetricDifference (rhs);
+//     auto        opBinary!"&"     (rhs);      // intersection
+//     auto        opBinary!"|"     (rhs);      // union
+//     auto        opBinary!"-"     (rhs);      // difference
+//     auto        opBinary!"^"     (rhs);      // symmetric difference
 // }
-//
-// template isStaticSet(set);
 //----------------------------------------------------------------------------//
-
-
-// For detecting StaticSet instances. (Used by isStaticSet far below...)
-private struct StaticSetTag {}
 
 
 /**
  * $(D StaticSet) is a collection of compile-time entities (types, symbols
- * and/or constants) without regard to order or duplicates.
+ * and/or constants) in which order has no significance and duplicate
+ * elements are ignored.
  *
  * Example:
- *  The following code instantiates three $(D StaticSet)s with the same
- *  types in different ordering, and compares them for equality.
 --------------------
-alias StaticSet!(      int,   real, string) A;
-alias StaticSet!( int, int,   real, string) B;
-alias StaticSet!(real, int, string,   real) C;
-
-// Compare the sets for equality without regard to order or duplicates.
-static assert(A.equals!(B));
-static assert(A.equals!(C));
-static assert(A.equals!(string, real, int));
-
-// The three instances even share the same symbol.
-static assert(__traits(isSame, A, B));
-static assert(__traits(isSame, B, C));
-static assert(__traits(isSame, C, A));
+enum signed = staticSet!(byte, short, int, long);
+enum   tiny = staticSet!(bool, byte, ubyte);
 --------------------
  */
-template StaticSet(items...)
+immutable @safe struct StaticSet(items...)
     if (isSetElementsNormalized!(items))
 {
 private:
-    alias StaticSetTag      ContainerTag;   // for isStaticSet
-    alias StaticSet!(items) This;           // reference to itself
+    alias StaticSetTag    ContainerTag;   // for isStaticSet
+    alias StaticSet!items This;           // non-qualified type
+    enum                  self = This();  // instance
 
-    static assert(isStaticSet!(This));
 
+public pure nothrow:
 
-public:
     //----------------------------------------------------------------//
     // Properties
     //----------------------------------------------------------------//
@@ -1158,106 +1226,12 @@ public:
 
 
     /**
-     * The _elements in the set.
+     * The unique _elements in the set.
+     *
+     * See_Also:
+     *  The global template $(D .elements(c)).
      */
     alias items elements;
-
-
-    /**
-     * The _ordering template used for normalizing the order of the
-     * elements in this set.
-     */
-    alias staticSetOrdering ordering;
-
-
-
-    //----------------------------------------------------------------//
-    // Set Comparison
-    //----------------------------------------------------------------//
-
-
-    /**
-     * Compares the set with $(D rhs) for equality.
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple to compare.
-     *
-     * Returns:
-     *  $(D true) if the two sets are the same, or $(D false) otherwise.
-     *
-     * Example:
---------------------
-alias StaticSet!(1, 2, "abc") A;
-
-static assert(A.equals!(A));
-static assert(A.equals!("abc", 1, 2, 1));
---------------------
-     */
-    template equals(alias rhs)
-        if (isStaticSet!(rhs))
-    {
-        // Template instances have the same symbol if and only if they
-        // are instantiated with the same arguments.
-
-        enum equals = __traits(isSame, This, rhs);
-    }
-
-
-    /// ditto
-    template equals(rhs...)
-    {
-        enum equals = equals!(StaticSet!(rhs));
-    }
-
-
-    unittest
-    {
-        static assert(equals!(This));
-        static assert(equals!(elements));
-    }
-
-
-
-    /**
-     * Determines if $(D rhs) is a subset of this set.
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple to compare.
-     *
-     * Returns:
-     *  $(D true) if $(D rhs) is a subset of this set, or $(D false) otherwise.
-     *
-     * Example:
---------------------
-alias StaticSet!(1, 2, "abc") A;
-alias StaticSet!(1, 2       ) B;
-
-static assert(A.contains!(A));
-static assert(A.contains!(B));
-static assert(A.contains!(2, "abc"));
---------------------
-     */
-    template contains(alias rhs)
-        if (isStaticSet!(rhs))
-    {
-        // Compare with the union for equality.
-        enum contains = StaticSet!(elements, rhs.elements).equals!(This);
-    }
-
-
-    /// ditto
-    template contains(rhs...)
-    {
-        enum contains = StaticSet!(elements, rhs).equals!(This);
-    }
-
-
-    unittest
-    {
-        static assert(contains!(This));
-        static assert(contains!(elements));
-        static assert(contains!( StaticSet!() ));
-    }
 
 
 
@@ -1267,7 +1241,8 @@ static assert(A.contains!(2, "abc"));
 
 
     /**
-     * Returns the union of this set and $(D {items...}).
+     * Returns a $(D StaticSet) object composed of the elements in this set
+     * and $(D ritems).
      *
      * Params:
      *  items = Compile-time entities to _add to the set.  Note that sets
@@ -1276,76 +1251,159 @@ static assert(A.contains!(2, "abc"));
      *          case, the resulting set will be a set of sets.
      *
      * Returns:
-     *  $(D StaticSet) that is the union of this set and $(D {items}).
+     *  The union of this set and $(D {items...}).
      *
      * Examples:
-     *  Appending the value $(D 4) two times to the set $(D A).
---------------------
-alias StaticSet!(1, 2, 3) A;
-
-alias A.add!(4) B;  // The new item '4' is added.
-alias B.add!(4) C;  // No effect.
-
-static assert(B.equals!(1, 2, 3, 4));
-static assert(C.equals!(1, 2, 3, 4));
---------------------
-     *
      *  Set of sets.
 --------------------
-alias StaticSet!() zero;
-alias zero.add!(zero) one;
-alias  one.add!( one) two;
-alias  two.add!( two) three;
+enum  zero = staticSet!( );
+enum   one = zero.add!(zero);
+enum   two =  one.add!( one);
+enum three =  two.add!( two);
 
 static assert(three.length == 3);
-static assert(three.equals!(zero, one, two));
+static assert(three == staticSet!(zero, one, two));
 --------------------
      */
-    template add(items...)
+    OpBinary!(StaticSetUnion, StaticSet!(ritems))
+        add(ritems...)()
     {
-        alias union_!(items) add;
+        return this | staticSet!(ritems);
     }
 
 
+  /+@@@BUG3598@@@
     unittest
     {
-        static assert(add!(elements).equals!(This));
+        static assert(self.add!() == self);
     }
+  +/
 
 
 
     /**
-     * Returns the difference of this set and $(D {items...}).
+     * Returns a $(D StaticSet) object composed of the elements in this set
+     * except $(D ritems).
      *
      * Params:
-     *  items = Compile-time entities to _remove from the set.  This argument
-     *          may contain _items that is not contained in the set; such
-     *          _items are simply ignored.
+     *  items = Compile-time entities to _remove from this set.  $(D items)
+     *          may contain entities not contained in this set; such _items
+     *          are simply ignored.
      *
      * Returns:
-     *  $(D StaticSet) that is the difference of this set and $(D {items}).
+     *  The difference of this set with regard to $(D {items...}).
      *
      * Example:
      *  Removing $(D byte) and $(D ubyte) from the set of the built-in signed
-     *  integral types.  $(D ubyte) is just ignored and the resulting set
-     *  consisting of $(D short), $(D int) and $(D long).
+     *  integral types.  $(D ubyte) is not in the set and just ignored.
 --------------------
-alias StaticSet!(byte, short, int, long) Signed;
-alias Signed.remove!(byte, ubyte) Longer;
+enum signed = staticSet!(byte, short, int, long);
+enum longer = signed.remove!(byte, ubyte);
 
-static assert(Longer.equals!(short, int, long));
+static assert(longer == staticSet!(short, int, long));
 --------------------
      */
-    template remove(items...)
+    OpBinary!(StaticSetDifference, StaticSet!(ritems))
+        remove(ritems...)()
     {
-        alias difference!(items) remove;
+        return this - staticSet!(ritems);
     }
 
 
+  /+@@@BUG3598@@@
     unittest
     {
-        static assert(remove!(elements).equals!());
+        static assert(self.remove!(elements) == staticSet!());
+        static struct Local {}
+        static assert(self.remove!(Local) == self);
     }
+  +/
+
+
+
+    //----------------------------------------------------------------//
+    // Comparison
+    //----------------------------------------------------------------//
+
+
+    /**
+     * The equality expression $(D a == b) evaluates to $(D true) if $(D a)
+     * and $(D b) are equivalent.
+     *
+     * Example:
+     *  The order of elements is not significant for set comparison.
+--------------------
+enum a = staticSet!(  real, 1, 2, 3, string);
+enum b = staticSet!(string, 3, 1, 2,   real);
+
+static assert(a == b);
+--------------------
+     */
+    bool opEquals(ritems...)(StaticSet!(ritems) )
+    {
+        return is(StaticSet!(items) == StaticSet!(ritems));
+    }
+
+
+  /+@@@BUG3598@@@
+    unittest
+    {
+        static struct Local {}
+        static assert(self == self);
+        static assert(self.add!(Local) != self);
+    }
+  +/
+
+
+
+    /**
+     * The $(D in) expression $(D a in b) evaluates to $(D true) if $(D a)
+     * is a subset of $(D b).
+     *
+     * Example:
+--------------------
+enum natural = staticSet!(1, 2, 3, 4, 5, 6, 7, 8, 9);
+enum    even = staticSet!(   2,    4,    6,    8   );
+
+static assert(   even  in natural);
+static assert(natural !in    even);
+--------------------
+     */
+    bool opBinary(string op : "in", R : StaticSet!ritems, ritems...)(R rhs)
+    {
+        return this == (this & rhs);
+    }
+
+
+  /+@@@BUG3598@@@
+    unittest
+    {
+        static struct Local {}
+        enum ext = self.add!(Local);
+        static assert(self in self);
+        static assert(self in  ext);
+        static assert(ext !in self);
+    }
+  +/
+
+
+
+    /**
+     * Returns $(D true) if all $(D ritems) are contained in this set.
+     */
+    template contains(ritems...)
+    {
+        enum contains = (staticSet!(ritems) in self);
+    }
+
+
+  /+@@@BUG3598@@@
+    unittest
+    {
+        static assert(self.contains!(This.elements));
+        static assert(self.contains!(             ));
+    }
+  +/
 
 
 
@@ -1355,380 +1413,357 @@ static assert(Longer.equals!(short, int, long));
 
 
     /**
-     * Constructs the set _intersection of this set and $(D rhs).
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple.
+     * The $(D and expression) $(D a & b) evaluates to the set intersection
+     * of $(D a) and $(D b).
      *
      * Returns:
-     *  $(D StaticSet) that is composed of the common elements in this
-     *  set and $(D rhs).
+     *  $(D StaticSet) object composed of the elements that are commonly
+     *  contained in both sides.
      *
      * See_Also:
      *  $(D StaticSetIntersection)
      */
-    template intersection(alias rhs)
-        if (isStaticSet!(rhs))
+    OpBinary!(StaticSetIntersection, R)
+        opBinary(string op : "&", R : StaticSet!ritems, ritems...)(R )
     {
-        alias StaticSet!(StaticSetIntersection!(This, rhs)) intersection;
+        return typeof(return)();
     }
 
 
-    /// ditto
-    template intersection(rhs...)
-    {
-        alias intersection!(StaticSet!(rhs)) intersection;
-    }
-
-
+  /+@@@BUG3598@@@
     unittest
     {
-        static assert(intersection!(This    ).equals!(This));
-        static assert(intersection!(elements).equals!(This));
-
-        alias StaticSet!() zero;
-        static assert(intersection!(zero).equals!(zero));
-        static assert(intersection!(    ).equals!(zero));
+        enum zero = staticSet!();
+        static assert((self & self) == self);
+        static assert((self & zero) == zero);
+        static assert((zero & self) == zero);
     }
+  +/
 
 
 
     /**
-     * Constructs the set union of this set and $(D rhs).
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple.
+     * The $(D or expression) $(D a | b) evaluates to the set union of
+     * $(D a) and $(D b).
      *
      * Returns:
-     *  $(D StaticSet) that is composed of the elements in this set and/or
-     *  $(D rhs).
+     *  $(D StaticSet) object composed only of the elements that are
+     *  commonly contained in both sides.
      *
      * See_Also:
      *  $(D StaticSetUnion), $(D StaticSet.add)
      */
-    template union_(alias rhs)
-        if (isStaticSet!(rhs))
+    OpBinary!(StaticSetUnion, R)
+        opBinary(string op : "|", R : StaticSet!ritems, ritems...)(R )
     {
-        alias StaticSet!(StaticSetUnion!(This, rhs)) union_;
+        return typeof(return)();
     }
 
 
-    /// ditto
-    template union_(rhs...)
-    {
-        alias union_!(StaticSet!(rhs)) union_;
-    }
-
-
+  /+@@@BUG3598@@@
     unittest
     {
-        static assert(union_!(This    ).equals!(This));
-        static assert(union_!(elements).equals!(This));
-
-        alias StaticSet!() zero;
-        static assert(union_!(zero).equals!(This));
-        static assert(union_!(    ).equals!(This));
+        enum zero = staticSet!();
+        static assert((self | self) == self);
+        static assert((self | zero) == self);
+        static assert((zero | self) == self);
     }
+  +/
 
 
 
     /**
-     * Constructs the set _difference of this set with regard to $(D rhs).
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple.
+     * The $(D minus expression) $(D a - b) evaluates to the set difference
+     * of $(D a) with regard to $(D b).
      *
      * Returns:
-     *  $(D StaticSet) that is composed of the elements in this set except
-     *  ones in $(D rhs).
+     *  $(D StaticSet) object composed of the elements in $(D a) except ones
+     *  in $(D b).
      *
      * See_Also:
      *  $(D StaticSetDifference), $(D StaticSet.remove)
      */
-    template difference(alias rhs)
-        if (isStaticSet!(rhs))
+    OpBinary!(StaticSetDifference, R)
+        opBinary(string op : "-", R : StaticSet!ritems, ritems...)(R )
     {
-        alias StaticSet!(StaticSetDifference!(This, rhs)) difference;
+        return typeof(return)();
     }
 
 
-    /// ditto
-    template difference(rhs...)
-    {
-        alias difference!(StaticSet!(rhs)) difference;
-    }
-
-
+  /+@@@BUG3598@@@
     unittest
     {
-        alias StaticSet!() zero;
-        static assert(difference!(This    ).equals!(zero));
-        static assert(difference!(elements).equals!(zero));
-        static assert(difference!(zero    ).equals!(This));
-        static assert(difference!(        ).equals!(This));
+        enum zero = staticSet!();
+        static assert(self - self == zero);
+        static assert(self - zero == self);
+        static assert(zero - self == zero);
     }
+  +/
 
 
 
     /**
-     * Constructs the set symmetric difference of this set and $(D rhs).
-     *
-     * Params:
-     *  rhs = $(D StaticSet) instance or an immediate tuple.
+     * The $(D xor expression) $(D a ^ b) evaluates to the set symmetric
+     * difference of $(D a) and $(D b).
      *
      * Returns:
-     *  $(D StaticSet) that is composed of the elements in this set and/or
-     *  $(D rhs) except the common ones.
+     *  $(D StaticSet) object composed of the elements in $(D a) and $(D b)
+     *  except ones commonly contained in both.
      *
      * See_Also:
      *  $(D StaticSetSymmetricDifference)
      */
-    template symmetricDifference(alias rhs)
-        if (isStaticSet!(rhs))
+    OpBinary!(StaticSetSymmetricDifference, R)
+        opBinary(string op : "^", R : StaticSet!ritems, ritems...)(R )
     {
-        alias StaticSet!(StaticSetSymmetricDifference!(This, rhs))
-                    symmetricDifference;
+        return typeof(return)();
     }
 
 
-    /// ditto
-    template symmetricDifference(rhs...)
-    {
-        alias symmetricDifference!(StaticSet!(rhs)) symmetricDifference;
-    }
-
-
+  /+@@@BUG3598@@@
     unittest
     {
-        alias StaticSet!() zero;
-        static assert(symmetricDifference!(This    ).equals!(zero));
-        static assert(symmetricDifference!(elements).equals!(zero));
-        static assert(symmetricDifference!(zero    ).equals!(This));
-        static assert(symmetricDifference!(        ).equals!(This));
+        enum zero = staticSet!();
+        static assert((self ^ self) == zero);
+        static assert((self ^ zero) == self);
+        static assert((zero ^ self) == self);
     }
+  +/
+
+
+
+    //----------------------------------------------------------------//
+    // Details
+    //----------------------------------------------------------------//
+private:
+
+    template OpBinary(alias setOperation, R)
+    {
+        alias StaticSet!(
+                setOperation!( Sequence!(  elements),
+                               Sequence!(R.elements),
+                               staticSetOrdering )) OpBinary;
+    }
+}
+
+
+/**
+ * ditto
+ */
+template staticSet(items...)
+{
+    enum staticSet = StaticSet!items();
 }
 
 
 unittest    // zero or single element
 {
-    alias StaticSet!() E;
-    static assert(E.empty);
-    static assert(E.length == 0);
-    static assert(E.elements.length == 0);
+    enum e = staticSet!();
+    static assert(e.empty);
+    static assert(e.length == 0);
+    static assert( MatchTuple!(elements!e).With!() );
 
-    alias StaticSet!(int) T;
-    static assert(!T.empty);
-    static assert( T.length == 1);
-    static assert( MatchTuple!(T.elements).With!(int) );
+    enum t = staticSet!(int);
+    static assert(!t.empty);
+    static assert( t.length == 1);
+    static assert( MatchTuple!(elements!t).With!(int) );
 
-    alias StaticSet!(1) V;
-    static assert(!V.empty);
-    static assert( V.length == 1);
-    static assert( MatchTuple!(V.elements).With!(1) );
+    enum v = staticSet!(1);
+    static assert(!v.empty);
+    static assert( v.length == 1);
+    static assert( MatchTuple!(elements!v).With!(1) );
 
-    alias StaticSet!(StaticSet) S;
-    static assert(!S.empty);
-    static assert( S.length == 1);
-    static assert( S.elements.length == 1);
-    static assert( MatchTuple!(S.elements).With!(StaticSet) );
+    enum s = staticSet!(StaticSet);
+    static assert(!s.empty);
+    static assert( s.length == 1);
+    static assert( MatchTuple!(elements!s).With!(StaticSet) );
 }
 
 unittest    // normalization (duplicate items)
 {
-    alias StaticSet!(1, 2, 3, 2, 1) S_12321;
-    alias StaticSet!(1, 2, 3      ) S_123__;
-    alias StaticSet!(   2, 3,    1) S__23_1;
+    enum s_12321 = staticSet!(1, 2, 3, 2, 1);
+    enum s_123__ = staticSet!(1, 2, 3      );
+    enum s__23_1 = staticSet!(   2, 3,    1);
 
-    static assert(!S_12321.empty);
-    static assert( S_12321.length == 3);
-    static assert( S_12321.elements.length == 3);
+    static assert(!s_12321.empty);
+    static assert( s_12321.length == 3);
+    static assert( elements!s_12321.length == 3);
 
-    static assert(__traits(isSame, S_12321, S_123__));
-    static assert(__traits(isSame, S_123__, S__23_1));
+    static assert(is( typeof(s_12321) == typeof(s_123__) ));
+    static assert(is( typeof(s_12321) == typeof(s__23_1) ));
 }
 
 unittest    // normalization (ordering)
 {
-    alias StaticSet!(-1.0,  real,     "dee", StaticSet) A;
-    alias StaticSet!(real, "dee", StaticSet,      -1.0) B;
+    enum a = staticSet!(-1.0,  real,     "dee", StaticSet);
+    enum b = staticSet!(real, "dee", StaticSet,      -1.0);
 
-    static assert(!A.empty);
-    static assert( A.length == 4);
-    static assert( A.elements.length == 4);
+    static assert(!a.empty);
+    static assert( a.length == 4);
+    static assert( elements!a.length == 4);
 
-    static assert(__traits(isSame, A, B));
+    static assert(is( typeof(a) == typeof(b) ));
 }
 
 
 unittest    // comparison for equality
 {
-    alias StaticSet!(1, 2, 3, 4   ) A;
-    alias StaticSet!(   2, 3, 4   ) B;
-    alias StaticSet!(1, 2, 3, 4, 5) C;
-    alias StaticSet!("12345", real) D;
-    alias StaticSet!(             ) E;
+    enum a = staticSet!(1, 2, 3, 4   );
+    enum b = staticSet!(   2, 3, 4   );
+    enum c = staticSet!(1, 2, 3, 4, 5);
+    enum d = staticSet!("12345", real);
+    enum e = staticSet!(             );
 
-    static assert( A.equals!(A));
-    static assert(!A.equals!(B));
-    static assert(!A.equals!(C));
-    static assert(!A.equals!(D));
-    static assert(!A.equals!(E));
-
-    // with immediate tuples
-    static assert( A.equals!(   1, 2, 3, 4   ));
-    static assert( A.equals!(1, 1, 2, 3, 4, 4));
-    static assert(!A.equals!(0, 1, 2, 3, 4, 5));
-    static assert(!A.equals!(      2, 3, 4   ));
-    static assert(!A.equals!("012345", string));
-    static assert(!A.equals!(                ));
+    static assert(a == a);
+    static assert(a != b);
+    static assert(a != c);
+    static assert(a != d);
+    static assert(a != e);
 
     // empty
-    static assert( E.equals!(E));
-    static assert( E.equals!( ));
-    static assert(!E.equals!(A));
-    static assert(!E.equals!(1));
+    static assert(e == e);
+    static assert(e != a);
 }
 
 unittest    // mixed elements
 {
-    alias StaticSet!("12345", real) A;
-    static assert( A.equals!("12345",    real));
-    static assert( A.equals!(   real, "12345"));
-    static assert(!A.equals!("54321",    real));
-    static assert(!A.equals!("12345",     int));
+    enum a = staticSet!("12345", real);
+    static assert(a == staticSet!("12345", real));
+    static assert(a != staticSet!("54321", real));
+    static assert(a != staticSet!("12345",  int));
 }
 
 unittest    // subset
 {
-    alias StaticSet!(1, 2, int, real, StaticSet) A;
+    enum a = staticSet!(1, 2, int, real, StaticSet);
 
-    static assert(A.contains!(A));
-    static assert(A.contains!(StaticSet!(         )));
-    static assert(A.contains!(StaticSet!(  1,    2)));
-    static assert(A.contains!(StaticSet!(int, real)));
-    static assert(A.contains!(StaticSet!(StaticSet)));
-    static assert(A.contains!(StaticSet!(1, 2, int)));
+    static assert(                    a in a);
+    static assert(staticSet!(         ) in a);
+    static assert(staticSet!(  1,    2) in a);
+    static assert(staticSet!(int, real) in a);
+    static assert(staticSet!(StaticSet) in a);
+    static assert(staticSet!(1, 2, int) in a);
 
-    static assert(A.contains!(A.elements));
-    static assert(A.contains!(   1,    2));
-    static assert(A.contains!( int, real));
-    static assert(A.contains!( StaticSet));
-    static assert(A.contains!( 1, 2, int));
+    static assert(a.contains!(elements!a));
+    static assert(a.contains!(   1,    2));
+    static assert(a.contains!( int, real));
+    static assert(a.contains!( StaticSet));
+    static assert(a.contains!( 1, 2, int));
 
-    static assert(!A.contains!(string));
-    static assert(!A.contains!(1, 100));
-    static assert(!A.contains!(1, 2, int, real, StaticSet, string));
+    static assert(!a.contains!(string));
+    static assert(!a.contains!(1, 100));
+    static assert(!a.contains!(1, 2, int, real, StaticSet, string));
 
     // empty
-    alias StaticSet!() E;
-    static assert( E.contains!(E));
-    static assert( E.contains!( ));
-    static assert(!E.contains!(A));
-    static assert(!E.contains!(0));
+    enum e = staticSet!();
+    static assert( e.contains!( ));
+    static assert(!e.contains!(0));
+    static assert(  e in e );
+    static assert(!(a in e));
 }
 
 
 unittest    // add
 {
-    alias StaticSet!() A;
-    alias A.add!(int       ) B;
-    alias B.add!(real,  255) C;
-    alias C.add!(int       ) D;
-    alias D.add!(int, "abc") E;
-    static assert(B.equals!(int                  ));
-    static assert(C.equals!(int, real, 255       ));
-    static assert(D.equals!(int, real, 255       ));
-    static assert(E.equals!(int, real, 255, "abc"));
+    enum a = staticSet!();
+    enum b = a.add!(int       );
+    enum c = b.add!(real,  255);
+    enum d = c.add!(int       );
+    enum e = d.add!(int, "abc");
+    static assert(b == staticSet!(int                  ));
+    static assert(c == staticSet!(int, real, 255       ));
+    static assert(d == staticSet!(int, real, 255       ));
+    static assert(e == staticSet!(int, real, 255, "abc"));
 
- /+
-    [XXX broken!]
-
-    alias StaticSet!() zero;
-    alias zero.add!(zero) one;
-    alias  one.add!( one) two;
-    alias  two.add!( two) three;
-    static assert(three.equals!(zero, one, two));
- +/
+    enum  zero = staticSet!();
+    enum   one = zero.add!(zero);
+    enum   two =  one.add!( one);
+    enum three =  two.add!( two);
+    static assert(three == staticSet!(zero, one, two));
 }
 
 unittest    // remove
 {
-    alias StaticSet!(int, real, 255, "abc") A;
-    alias A.remove!(int       ) B;
-    alias B.remove!(real,  255) C;
-    alias C.remove!(int       ) D;
-    alias D.remove!(int, "abc") E;
-    static assert(B.equals!(real, 255, "abc"));
-    static assert(C.equals!(           "abc"));
-    static assert(D.equals!(           "abc"));
-    static assert(E.equals!(                ));
+    enum a = staticSet!(int, real, 255, "abc");
+    enum b = a.remove!(int       );
+    enum c = b.remove!(real,  255);
+    enum d = c.remove!(int       );
+    enum e = d.remove!(int, "abc");
+    static assert(b == staticSet!(real, 255, "abc"));
+    static assert(c == staticSet!(           "abc"));
+    static assert(d == staticSet!(           "abc"));
+    static assert(e == staticSet!(                ));
 }
 
 
 unittest    // intersection
 {
-    alias StaticSet!(2, 3, 5, 7, 11) A;
-    alias StaticSet!(1, 3, 5, 7,  9) B;
-    static assert(A.intersection!(A).equals!(2, 3, 5, 7, 11));
-    static assert(A.intersection!(B).equals!(3, 5, 7));
-    static assert(B.intersection!(A).equals!(3, 5, 7));
-    static assert(B.intersection!(B).equals!(1, 3, 5, 7,  9));
+    enum a = staticSet!(2, 3, 5, 7, 11);
+    enum b = staticSet!(1, 3, 5, 7,  9);
+    static assert((a & a) == staticSet!(2, 3, 5, 7, 11));
+    static assert((a & b) == staticSet!(3, 5, 7));
+    static assert((b & a) == staticSet!(3, 5, 7));
+    static assert((b & b) == staticSet!(1, 3, 5, 7,  9));
 
-    static assert(A.intersection!( ).equals!( ));
-    static assert(B.intersection!( ).equals!( ));
+    static assert((a & staticSet!( )) == staticSet!( ));
+    static assert((b & staticSet!( )) == staticSet!( ));
 
-    static assert(A.intersection!(2, 4, 6).equals!(2));
-    static assert(B.intersection!(2, 4, 6).equals!( ));
+    static assert((a & staticSet!(2, 4, 6)) == staticSet!(2));
+    static assert((b & staticSet!(2, 4, 6)) == staticSet!( ));
 }
 
 unittest    // union
 {
-    alias StaticSet!(2, 3, 5, 7, 11) A;
-    alias StaticSet!(1, 3, 5, 7,  9) B;
-    static assert(A.union_!(A).equals!(2, 3, 5, 7, 11));
-    static assert(A.union_!(B).equals!(1, 2, 3, 5,  7, 9, 11));
-    static assert(B.union_!(A).equals!(1, 2, 3, 5,  7, 9, 11));
-    static assert(B.union_!(B).equals!(1, 3, 5, 7,  9));
 
-    static assert(A.union_!( ).equals!(A.elements));
-    static assert(B.union_!( ).equals!(B.elements));
+    alias staticSet set;
 
-    static assert(A.union_!(2, 4, 6).equals!(   2, 3, 4, 5, 6, 7, 11));
-    static assert(B.union_!(2, 4, 6).equals!(1, 2, 3, 4, 5, 6, 7,  9));
+    enum a = set!(2, 3, 5, 7, 11);
+    enum b = set!(1, 3, 5, 7,  9);
+    static assert((a | a) == set!(2, 3, 5, 7, 11));
+    static assert((a | b) == set!(1, 2, 3, 5,  7, 9, 11));
+    static assert((b | a) == set!(1, 2, 3, 5,  7, 9, 11));
+    static assert((b | b) == set!(1, 3, 5, 7,  9));
+
+    static assert((a | set!( )) == set!(elements!a));
+    static assert((b | set!( )) == set!(elements!b));
+
+    static assert((a | set!(2, 4, 6)) == set!(   2, 3, 4, 5, 6, 7, 11));
+    static assert((b | set!(2, 4, 6)) == set!(1, 2, 3, 4, 5, 6, 7,  9));
 }
 
 unittest    // difference
 {
-    alias StaticSet!(2, 3, 5, 7, 11) A;
-    alias StaticSet!(1, 3, 5, 7,  9) B;
-    static assert(A.difference!(A).equals!( ));
-    static assert(A.difference!(B).equals!(2, 11));
-    static assert(B.difference!(A).equals!(1,  9));
-    static assert(B.difference!(B).equals!( ));
+    enum a = staticSet!(2, 3, 5, 7, 11);
+    enum b = staticSet!(1, 3, 5, 7,  9);
+    static assert((a - a) == staticSet!( ));
+    static assert((a - b) == staticSet!(2, 11));
+    static assert((b - a) == staticSet!(1,  9));
+    static assert((b - b) == staticSet!( ));
 
-    static assert(A.difference!( ).equals!(A.elements));
-    static assert(B.difference!( ).equals!(B.elements));
+    static assert((a - staticSet!( )) == staticSet!(elements!a));
+    static assert((b - staticSet!( )) == staticSet!(elements!b));
 
-    static assert(A.difference!(2, 4, 6).equals!(   3, 5, 7, 11));
-    static assert(B.difference!(2, 4, 6).equals!(1, 3, 5, 7,  9));
+    static assert((a - staticSet!(2, 4, 6)) == staticSet!(   3, 5, 7, 11));
+    static assert((b - staticSet!(2, 4, 6)) == staticSet!(1, 3, 5, 7,  9));
 }
 
 unittest    // symmetric difference
 {
-    alias StaticSet!(2, 3, 5, 7, 11) A;
-    alias StaticSet!(1, 3, 5, 7,  9) B;
-    static assert(A.symmetricDifference!(A).equals!( ));
-    static assert(A.symmetricDifference!(B).equals!(1, 2, 9, 11));
-    static assert(B.symmetricDifference!(A).equals!(1, 2, 9, 11));
-    static assert(B.symmetricDifference!(B).equals!( ));
+    enum a = staticSet!(2, 3, 5, 7, 11);
+    enum b = staticSet!(1, 3, 5, 7,  9);
 
-    static assert(A.symmetricDifference!( ).equals!(A.elements));
-    static assert(B.symmetricDifference!( ).equals!(B.elements));
+    static assert((a ^ a) == staticSet!( ));
+    static assert((a ^ b) == staticSet!(1, 2, 9, 11));
+    static assert((b ^ a) == staticSet!(1, 2, 9, 11));
+    static assert((b ^ b) == staticSet!( ));
 
-    static assert(A.symmetricDifference!(2, 4, 6)
-                                .equals!(3, 4, 5, 6, 7, 11));
-    static assert(B.symmetricDifference!(2, 4, 6)
-                                .equals!(1, 2, 3, 4, 5, 6, 7, 9));
+    static assert((a ^ staticSet!( )) == staticSet!(elements!a));
+    static assert((b ^ staticSet!( )) == staticSet!(elements!b));
+
+    static assert((a ^ staticSet!(2, 4, 6)) == 
+                       staticSet!(3, 4, 5, 6, 7, 11));
+    static assert((b ^ staticSet!(2, 4, 6)) ==
+                       staticSet!(1, 2, 3, 4, 5, 6, 7, 9));
 }
 
 
@@ -1754,11 +1789,11 @@ private template isSetElementsNormalized(items...)
 }
 
 
-// The ordering of StaticSet elements should _always_ be heterogeneousLess
-// since set operations assume that all sets have their elements ordered in
-// the unified rule.
+// The ordering of StaticSet elements should _always_ be genericLess since
+// set operations assume that all sets have their elements ordered in the
+// unified rule.
 
-private alias heterogeneousLess staticSetOrdering;
+private alias genericLess staticSetOrdering;
 
 
 private template NormalizeSetElements(items...)
@@ -1796,8 +1831,11 @@ unittest    // types
 
 
 
+private enum StaticSetTag { init }
+
+
 /**
- * Returns $(D true) iff $(D set) is an instance of the $(D StaticSet).
+ * Returns $(D true) iff $(D set) is a $(D StaticSet) object.
  *
  * Example:
  *  The template in the following code utilizes $(D isStaticSet) for seeing
@@ -1807,13 +1845,13 @@ template toStaticSet(alias set)
     if (isStaticSet!(set))
 {
     // It's already a StaticSet.
-    alias set toStaticSet;
+    enum toStaticSet = set;
 }
 
 template toStaticSet(items...)
 {
     // Create a StaticSet consisting of the specified items.
-    alias StaticSet!(items) toStaticSet;
+    enum toStaticSet = staticSet!(items);
 }
 --------------------
  */
@@ -1823,8 +1861,10 @@ template isStaticSet(alias set)
 }
 
 
-/// ditto
-template isStaticSet(set)
+/**
+ * ditto
+ */
+template isStaticSet(set...)
 {
     enum isStaticSet = false;
 }
@@ -1832,14 +1872,14 @@ template isStaticSet(set)
 
 unittest    // positive cases
 {
-    alias StaticSet!(          ) A;
-    alias StaticSet!(1         ) B;
-    alias StaticSet!(2, int    ) C;
-    alias StaticSet!(3, real, A) D;
-    static assert(isStaticSet!(A));
-    static assert(isStaticSet!(B));
-    static assert(isStaticSet!(C));
-    static assert(isStaticSet!(D));
+    enum a = staticSet!(          );
+    enum b = staticSet!(1         );
+    enum c = staticSet!(2, int    );
+    enum d = staticSet!(3, real, a);
+    static assert(isStaticSet!(a));
+    static assert(isStaticSet!(b));
+    static assert(isStaticSet!(c));
+    static assert(isStaticSet!(d));
 }
 
 unittest    // negative cases
@@ -1855,13 +1895,181 @@ unittest    // negative cases
 
 
 //----------------------------------------------------------------------------//
+// Meta Entity
+//----------------------------------------------------------------------------//
+// struct MetaEntity(entity)
+// {
+//     alias    Tag;
+//     enum     id;
+//     bool     opEquals(rhs);
+//     string   toString();
+// }
+// template     metaEntity(entity);
+//----------------------------------------------------------------------------//
+
+
+private enum EntityCategory
+{
+    type,
+    symbol,
+    constant,
+    tuple,
+}
+
+
+/**
+ * $(D MetaEntity) represents a compile-time entity: type, symbol, constant
+ * or tuple of them.
+ *
+ * Example:
+--------------------
+static assert( metaEntity!(int) == metaEntity!(int ) );
+static assert( metaEntity!(int) != metaEntity!(real) );
+--------------------
+ *
+ * BUGS:
+ *  $(TODO Distinguish non-tuple entities with single-element tuples.)
+ */
+@safe
+immutable struct MetaEntity(entity...)
+{
+@safe pure nothrow:
+
+    alias MetaEntity Tag;
+
+
+    enum string id = Tag.mangleof;
+
+
+    bool opEquals(R)(R )
+    {
+        return is(Tag == R.Tag);
+    }
+
+
+    string toString()
+    {
+        return Tag.stringof;
+    }
+}
+
+
+/**
+ * ditto
+ */
+template metaEntity(entity...)
+{
+    enum metaEntity = MetaEntity!entity();
+}
+
+
+
+
+//----------------------------------------------------------------------------//
 // Utilities
 //----------------------------------------------------------------------------//
-// template interpretNow( T, T value);
-// template interpretNow(alias value);
+// template elements        (c);
 //
-// template MatchTuple(items...) . With(rhs...);
+// template interpretNow    ( T, T value);
+// template interpretNow    (alias value);
+//
+// template MatchTuple      (items...) . With(rhs...);
+//
+// template Repeat          (size_t n, group...);
 //----------------------------------------------------------------------------//
+
+
+/**
+ * Uniform interface for obtaining the _elements in a meta collection.
+ *
+ * $(Workaround
+ *  The current compiler implementation rewrites $(D c.(e1, e2 ...)) to
+ *  $(D (c.e1, c.e2, ...)) always when $(D c) is an expression.  And
+ *  $(D c._elements) cannot be used as a usual static tuple due to the
+ *  behavior.  This template would be used as a workaround for the problem.
+--------------------
+struct S(items...)
+{
+    alias items elements;
+}
+S!(1, 2, 3, 4) s;
+int[] array = [ s.elements ];   // error...
+--------------------
+ * )
+ *
+ * Params:
+ *  c = Constant expression or the symbol of a meta collection in which
+ *      $(D c._elements) is a static tuple of compile-time entities.
+ *
+ * Returns:
+ *  The static tuple $(D c._elements).
+ *
+ * Example:
+--------------------
+enum a = staticSet!(1, 3, 5, 7);
+enum b = staticSet!(2, 3, 4, 5);
+
+/+
+int[] axorb = [ (a ^ b).elements ]; // this doesn't work
+ +/
+int[] axorb = [ elements!(a ^ b) ]; // workaround
+
+assert(axorb == [ 1, 2, 4, 7 ]);
+--------------------
+ */
+template elements(alias c)
+{
+    static if (is(c C) || is(typeof(c) C))
+        alias C.elements elements;
+    else
+        alias c.elements elements;
+}
+
+
+/// ditto
+template elements(c)
+{
+    alias c.elements elements;
+}
+
+
+unittest    // constant symbol
+{
+    static struct Local(items...)
+    {
+        alias items elements;
+    }
+    enum a = Local!(                 )();
+    enum b = Local!(  1,    2,      3)();
+    enum c = Local!(int, real, string)();
+    static assert(MatchTuple!(elements!(a)).With!(                 ));
+    static assert(MatchTuple!(elements!(b)).With!(  1,    2,      3));
+    static assert(MatchTuple!(elements!(c)).With!(int, real, string));
+}
+
+unittest    // constant expression
+{
+    static struct Local(items...)
+    {
+        alias items elements;
+    }
+    static Local!(items) type(items...)() @property
+    {
+        return Local!(items)();
+    }
+    static assert(MatchTuple!(elements!( type!(1, 2, 3) )).With!(1, 2, 3));
+    static assert(MatchTuple!(elements!( type!(wstring) )).With!(wstring));
+}
+
+unittest    // type
+{
+    static struct Local(items...)
+    {
+        alias items elements;
+    }
+    static assert(MatchTuple!(elements!( Local!(1, 2, 3) )).With!(1, 2, 3));
+    static assert(MatchTuple!(elements!( Local!(wstring) )).With!(wstring));
+}
 
 
 /**
@@ -1886,8 +2094,8 @@ unittest    // negative cases
 template mixinStaticStore(alias value)
 {
     static assert(__traits(compiles, interpretNow!(value)),
-                   "The argument to mixinStaticStore must be able to be "
-                  ~"interpreted at compile time!");
+                   "The argument to mixinStaticStore must be "
+                  ~"evaluateable at compile time!");
     static store = value;
 }
 
@@ -1931,12 +2139,22 @@ unittest    // convertible/non-convertible types
 }
 
 
-/// ditto
+/**
+ * ditto
+ */
 template interpretNow(alias value)
 {
     alias interpretNow!(typeof(value), value) interpretNow;
 }
 
+
+unittest    // immediate values
+{
+    static struct S { int n; }
+//  static assert(interpretNow!(12345678) == 12345678); // @@@why?
+    static assert(interpretNow!("string") == "string");
+    static assert(interpretNow!(S(12345)) == S(12345));
+}
 
 unittest    // constant and non-constant symbols
 {
@@ -1983,9 +2201,8 @@ static assert(!match.With!(4, 3, 2, 1));
      */
     template With(rhs...)
     {
-        // NOTE: Template instances have the same symbol if and only if they
-        //       are instantiated with the same arguments.  The following
-        //       predicate exploits this fact for comparing items and rhs.
+        // NOTE: Template instances have the same symbol if and only if
+        //       they are instantiated with the same arguments.
 
         enum With = __traits(isSame, MatchTuple!(items), MatchTuple!(rhs));
     }
@@ -2014,5 +2231,771 @@ unittest    // mixed elements
 {
     static assert( MatchTuple!(42, int, MatchTuple)
                         .With!(42, int, MatchTuple) );
+}
+
+
+
+/**
+ * Returns a tuple in which a _group of compile-time entities $(D group...)
+ * repeats $(D n) times.
+ *
+ * Params:
+ *      n = Zero or more number of repetition.
+ *  group = Compile-time entitites to repeat.
+ *
+ * Returns:
+ *  Static tuple consisting of $(D n) $(D group)s.
+ *
+ * Example:
+ *  Using $(D Repeat) for static foreach.
+--------------------
+// Prints "0u 1u 2u 3u 4u 5u" at compile time.
+foreach (i, _; Repeat!(6, void))
+{
+    pragma(msg, i);
+}
+--------------------
+ */
+template Repeat(size_t n, group...)
+{
+    static if (n == 0 || group.length == 0)
+    {
+        alias TypeTuple!() Repeat;
+    }
+    else
+    {
+        alias TypeTuple!(group, Repeat!(n - 1, group)) Repeat;
+    }
+}
+
+
+unittest    // zero time
+{
+    alias Repeat!(0) A;
+    static assert(A.length == 0);
+
+    alias Repeat!(0, int) B;
+    static assert(B.length == 0);
+
+    alias Repeat!(0, int, real, string) C;
+    static assert(C.length == 0);
+}
+
+unittest    // one time
+{
+    alias Repeat!(1) A;
+    static assert(A.length == 0);
+
+    alias Repeat!(1, int) B;
+    static assert(MatchTuple!(B).With!(int));
+
+    alias Repeat!(1, int, real, string) C;
+    static assert(MatchTuple!(C).With!(int, real, string));
+}
+
+unittest    // two or more
+{
+    alias Repeat!(2) A;
+    static assert(A.length == 0);
+
+    alias Repeat!(2, int) B;
+    static assert(MatchTuple!(B).With!(int, int));
+
+    alias Repeat!(2, int, real, string) C;
+    static assert(MatchTuple!(C).With!(int, real, string,
+                                       int, real, string));
+
+    alias Repeat!(4, A) D;
+    static assert(MatchTuple!(D).With!(A, A, A, A));
+
+    alias Repeat!(6, A, B, C) E;
+    static assert(MatchTuple!(E).With!(A, B, C,  A, B, C,  A, B, C,
+                                       A, B, C,  A, B, C,  A, B, C));
+}
+
+
+
+/**
+Retrieves the members of an enumerated type $(D enum E).
+
+Params:
+ E = An enumerated type. $(D E) may have duplicated elements.
+
+Returns:
+ Static tuple composed of the members of the enumerated type $(D E).
+ The members are arranged in the same order as declared in $(D E).
+
+Example:
+ The following function $(D rank(v)) uses the $(D EnumMembers) template
+ for finding a member $(D e) in an enumerated type $(D E).
+--------------------
+// Returns i if e is the i-th enumerator of E.
+size_t rank(E)(E e)
+    if (is(E == enum))
+{
+    foreach (i, member; EnumMembers!E)
+    {
+        if (e == member)
+            return i;
+    }
+    assert(0, "Not an enum member");
+}
+
+enum Mode
+{
+    read  = 1,
+    write = 2,
+    map   = 4,
+}
+assert(rank(Mode.read ) == 0);
+assert(rank(Mode.write) == 1);
+assert(rank(Mode.map  ) == 2);
+--------------------
+ */
+template EnumMembers(E)
+    if (is(E == enum))
+{
+    alias EnumSpecificMembers!(E, __traits(allMembers, E)) EnumMembers;
+}
+
+private template EnumSpecificMembers(Enum, names...)
+{
+    static if (names.length > 0)
+    {
+        alias TypeTuple!(
+                namedConstant!(
+                    names[0], __traits(getMember, Enum, names[0])),
+                EnumSpecificMembers!(Enum, names[1 .. $])
+            ) EnumSpecificMembers;
+    }
+    else
+    {
+        alias TypeTuple!() EnumSpecificMembers;
+    }
+}
+
+
+// The identifier of each enum member will be exposed via this template
+// once the BUG4732 is fixed.
+//
+//   enum E { member }
+//   assert(__traits(identifier, EnumMembers!E[0]) == "member");
+//
+private template namedConstant(string name, alias value)
+{
+    mixin("alias _namedConstant!(name, value)."~ name ~" namedConstant;");
+}
+
+private template _namedConstant(string name, alias _namedConstant_value)
+{
+    mixin("enum "~ name ~" = _namedConstant_value;");
+}
+
+
+unittest
+{
+    enum A { a }
+    static assert([ EnumMembers!A ] == [ A.a ]);
+    enum B { a, b, c, d, e }
+    static assert([ EnumMembers!B ] == [ B.a, B.b, B.c, B.d, B.e ]);
+}
+
+unittest    // typed enums
+{
+    enum A : string { a = "alpha", b = "beta" }
+    static assert([ EnumMembers!A ] == [ A.a, A.b ]);
+
+    static struct S
+    {
+        int value;
+        int opCmp(S rhs) nothrow { return value - rhs.value; }
+    }
+    enum B : S { a = S(1), b = S(2), c = S(3) }
+    static assert([ EnumMembers!B ] == [ B.a, B.b, B.c ]);
+}
+
+unittest    // duplicated values
+{
+    enum A
+    {
+        a = 0, b = 0,
+        c = 1, d = 1, e
+    }
+    static assert([ EnumMembers!A ] == [ A.a, A.b, A.c, A.d, A.e ]);
+}
+
+
+
+//----------------------------------------------------------------------------//
+// StaticSwitch
+//----------------------------------------------------------------------------//
+
+
+/**
+ *
+ * Examples:
+ *  Switch over enum, return a type.
+--------------------
+enum Precision
+{
+    integral,
+    single,
+    maximum
+}
+alias StaticSwitch!( Precision.single ).
+    .Case!( Precision.integral, int   )
+    .Case!( Precision.single,   float )
+    .Case!( Precision.maximum,  real  )
+    .Finish T;
+static assert(is( T == float ));
+--------------------
+ *
+ *  Switch over type, return a constant.
+--------------------
+enum a = StaticSwitch!( real )
+        .Case!(  int, "integer"        )
+        .Case!( real, "floating point" )
+   .Otherwise!(       "dunno"          );
+
+static assert(a == "floating point");
+--------------------
+ */
+template StaticSwitch(alias target, alias equal = isSame)
+{
+    // Install Case/Finish/Otherwise nodes.
+    mixin GenerateNode!(Condition.init, SwitchState!target);
+
+
+    //----------------------------------------------------------------//
+private:
+
+    enum Condition
+    {
+        unmatched,
+        matched,
+    }
+
+
+    template Pack(      T   ) { alias T unpack; }
+    template Pack(alias s   ) { alias s unpack; }
+//  template Pack(      t...) { alias t unpack; }
+
+
+    // Update the state to reflect that 'Cast!(match, ...)' is consumed.
+    template popCase(alias state, alias match)
+    {
+        alias state.pop!(match) popCase;
+
+        static assert(!__traits(isSame, state, popCase),
+                      "Invalid case: " ~ match.stringof);
+    }
+
+
+    // <unmatched>
+    //     :
+    //  .Case     !( cond, result )
+    //  .Otherwise!(       result )
+    //
+    template GenerateNode(Condition condition : Condition.unmatched,
+                          alias state)
+    {
+        template Case(alias match, Result)
+        {
+            alias GenericCase_!(match, Pack!Result) Case;
+        }
+
+        template Case(alias match, alias result)
+        {
+            alias GenericCase_!(match, Pack!result) Case;
+        }
+
+//      template Case(alias match, result...)
+//      {
+//          alias GenericCase_!(match, Pack!result) Case;
+//      }
+
+
+        // Using an Otherwise node under the unmatched state yields the
+        // specified default value.
+        template Otherwise(      Result   ) { alias Result Otherwise; }
+        template Otherwise(alias result   ) { alias result Otherwise; }
+//      template Otherwise(      result...) { alias result Otherwise; }
+
+
+        // Recursively install Case/Finish/Otherwise nodes.
+        private template GenericCase_(alias match, alias result)
+        {
+            private alias popCase!(state, match) nextState;
+
+            static if (equal!(target, match))
+                mixin GenerateNode!(Condition.matched, nextState, result);
+            else
+                mixin GenerateNode!(Condition.unmatched, nextState);
+        }
+    }
+
+
+    // <matched>
+    //     :
+    //  .Case!( cond, result )
+    //  .Finish
+    //
+    template GenerateNode(Condition condition : Condition.matched,
+                          alias     state,
+                          alias     result)
+    {
+        // Under the matched state Case just propagates the result.
+        template Case(alias match, _...)
+        {
+            mixin GenerateNode!(
+                    condition, popCase!(state, match), result);
+        }
+
+
+        // Otherwise yields the propagated result.
+        template Otherwise(_...) { alias result.unpack Otherwise; }
+
+
+        // Finish must not be exposed if there are uncaught cases.
+        static if (state.finished) alias result.unpack Finish;
+    }
+}
+
+
+unittest    // switch-case-finish over enum
+{
+    enum YesNo
+    {
+        yes, no, dunno
+    }
+
+    alias StaticSwitch!( YesNo.yes )
+            .Case!( YesNo.yes  , int    )
+            .Case!( YesNo.no   , real   )
+            .Case!( YesNo.dunno, string )
+            .Finish A;
+    static assert(is(A == int));
+
+    alias StaticSwitch!( YesNo.no )
+            .Case!( YesNo.yes  , int    )
+            .Case!( YesNo.no   , real   )
+            .Case!( YesNo.dunno, string )
+            .Finish B;
+    static assert(is(B == real));
+
+    alias StaticSwitch!( YesNo.dunno )
+            .Case!( YesNo.yes  , int    )
+            .Case!( YesNo.no   , real   )
+            .Case!( YesNo.dunno, string )
+            .Finish C;
+    static assert(is(C == string));
+
+    // not covered
+    static assert(!__traits(compiles,
+            StaticSwitch!( YesNo.dunno )
+                .Case!( YesNo.yes, int  )
+                .Case!( YesNo.no , real )
+                .Finish ));
+
+    // not covered but matches
+    static assert(!__traits(compiles,
+            StaticSwitch!( YesNo.yes )
+                .Case!( YesNo.yes, int  )
+                .Case!( YesNo.no , real )
+                .Finish ));
+
+    // no match
+    static assert(!__traits(compiles,
+            StaticSwitch!( cast(YesNo) -1 )
+                .Case!( YesNo.yes  , int    )
+                .Case!( YesNo.no   , real   )
+                .Case!( YesNo.dunno, string )
+                .Finish ));
+}
+
+unittest    // switch-case-otherwise over enum
+{
+    enum YesNo
+    {
+        yes, no, dunno
+    }
+
+    alias StaticSwitch!( YesNo.yes )
+            .Case!( YesNo.yes, int  )
+            .Case!( YesNo.no , real )
+       .Otherwise!(            void ) A;
+    static assert(is(A == int));
+
+    alias StaticSwitch!( YesNo.dunno )
+            .Case!( YesNo.yes, int  )
+            .Case!( YesNo.no , real )
+       .Otherwise!(            void ) B;
+    static assert(is(B == void));
+
+    alias StaticSwitch!( YesNo.no )
+       .Otherwise!(            void ) C;
+    static assert(is(C == void));
+}
+
+unittest    // switch-case-otherwise over constant
+{
+    alias StaticSwitch!( 16 )
+            .Case!( 16, int    )
+            .Case!( 32, real   )
+            .Case!( 64, string )
+       .Otherwise!(     void   ) A;
+    static assert(is(A == int));
+
+    alias StaticSwitch!( 64 )
+            .Case!( 16, int    )
+            .Case!( 32, real   )
+            .Case!( 64, string )
+       .Otherwise!(     void   ) B;
+    static assert(is(B == string));
+
+    alias StaticSwitch!( 128 )
+            .Case!( 16, int    )
+            .Case!( 32, real   )
+            .Case!( 64, string )
+       .Otherwise!(     void   ) C;
+    static assert(is(C == void));
+
+    // Finish is disallowed
+    static assert(!__traits(compiles,
+            StaticSwitch!( 32 )
+                .Case!( 16, int    )
+                .Case!( 32, real   )
+                .Case!( 64, string )
+                .Finish ));
+}
+
+unittest    // switch-case-otherwise over symbol
+{
+    static int varA, varB, varC, varZ;
+
+    alias StaticSwitch!( varA )
+            .Case!( varA, int    )
+            .Case!( varB, real   )
+            .Case!( varC, string )
+       .Otherwise!(       void   ) A;
+    static assert(is(A == int));
+
+    alias StaticSwitch!( varC )
+            .Case!( varA, int    )
+            .Case!( varB, real   )
+            .Case!( varC, string )
+       .Otherwise!(       void   ) B;
+    static assert(is(B == string));
+
+    alias StaticSwitch!( varZ )
+            .Case!( varA, int    )
+            .Case!( varB, real   )
+            .Case!( varC, string )
+       .Otherwise!(       void   ) Z;
+    static assert(is(Z == void));
+
+    // Finish is disallowed
+    static assert(!__traits(compiles,
+            StaticSwitch!( varB )
+                .Case!( varA, int    )
+                .Case!( varB, real   )
+                .Case!( varC, string )
+                .Finish ));
+}
+
+unittest    // result = constant value
+{
+    enum a = StaticSwitch!( "kilo" )
+            .Case!( "kilo",     1_000 )
+            .Case!( "mega", 1_000_000 )
+       .Otherwise!(                -1 );
+    static assert(a == 1_000);
+
+    enum b = StaticSwitch!( "mega" )
+            .Case!( "kilo",     1_000 )
+            .Case!( "mega", 1_000_000 )
+       .Otherwise!(                -1 );
+    static assert(b == 1_000_000);
+
+    enum c = StaticSwitch!( "giga" )
+            .Case!( "kilo",     1_000 )
+            .Case!( "mega", 1_000_000 )
+       .Otherwise!(                -1 );
+    static assert(c == -1);
+}
+
+unittest    // result = symbol
+{
+    static int varA, varB, varC;
+
+    alias StaticSwitch!( "A" )
+            .Case!( "A", varA )
+            .Case!( "B", varB )
+       .Otherwise!( "C", varC ) x;
+    static assert(__traits(isSame, x, varA));
+
+    alias StaticSwitch!( "B" )
+            .Case!( "A", varA )
+            .Case!( "B", varB )
+       .Otherwise!( "C", varC ) y;
+    static assert(__traits(isSame, y, varB));
+
+    alias StaticSwitch!( "C" )
+            .Case!( "A", varA )
+            .Case!( "B", varB )
+       .Otherwise!(      varC ) z;
+    static assert(__traits(isSame, z, varC));
+}
+
+
+// NOTE: The following overload of StaticSwitch is almost identical to
+//       the above one, except that the target is a type.
+
+/**
+ * ditto
+ */
+template StaticSwitch(Target, alias equal = isSame)
+{
+    // Install Case/Finish/Otherwise nodes.
+    mixin GenerateNode!(Condition.init, SwitchState!Target);
+
+
+    //----------------------------------------------------------------//
+private:
+
+    enum Condition
+    {
+        unmatched,
+        matched,
+    }
+
+
+    template Pack(      T   ) { alias T unpack; }
+    template Pack(alias s   ) { alias s unpack; }
+//  template Pack(      t...) { alias t unpack; }
+
+
+    // Update the state to reflect that 'Cast!(match, ...)' is consumed.
+    template popCase(alias state, Match)
+    {
+        alias state.pop!(Match) popCase;
+
+        static assert(!__traits(isSame, state, popCase),
+                      "Invalid case: " ~ match.stringof);
+    }
+
+
+    // <unmatched>
+    //     :
+    //  .Case     !( cond, result )
+    //  .Otherwise!(       result )
+    //
+    template GenerateNode(Condition condition : Condition.unmatched,
+                          alias state)
+    {
+        template Case(Match, Result)
+        {
+            alias GenericCase_!(Match, Pack!Result) Case;
+        }
+
+        template Case(Match, alias result)
+        {
+            alias GenericCase_!(Match, Pack!result) Case;
+        }
+
+//      template Case(Match, result...)
+//      {
+//          alias GenericCase_!(Match, Pack!result) Case;
+//      }
+
+
+        // Using an Otherwise node under the unmatched state yields the
+        // specified default value.
+        template Otherwise(      Result   ) { alias Result Otherwise; }
+        template Otherwise(alias result   ) { alias result Otherwise; }
+//      template Otherwise(      result...) { alias result Otherwise; }
+
+
+        // Recursively install Case/Finish/Otherwise nodes.
+        private template GenericCase_(Match, alias result)
+        {
+            private alias popCase!(state, Match) nextState;
+
+            static if (equal!(Target, Match))
+                mixin GenerateNode!(Condition.matched, nextState, result);
+            else
+                mixin GenerateNode!(Condition.unmatched, nextState);
+        }
+    }
+
+
+    // <matched>
+    //     :
+    //  .Case!( cond, result )
+    //  .Finish
+    //
+    template GenerateNode(Condition condition : Condition.matched,
+                          alias     state,
+                          alias     result)
+    {
+        // Under the matched state Case just propagates the result.
+        template Case(Match, _...)
+        {
+            mixin GenerateNode!(
+                    condition, popCase!(state, Match), result);
+        }
+
+
+        // Otherwise yields the propagated result.
+        template Otherwise(_...) { alias result.unpack Otherwise; }
+
+
+        // Finish must not be exposed if there are uncaught cases.
+        static if (state.finished) alias result.unpack Finish;
+    }
+}
+
+
+unittest    // switch-case-otherwise over type
+{
+    static struct S {}
+    static struct T {}
+    static struct U {}
+    static struct X {}
+
+    alias StaticSwitch!( S )
+            .Case!( S, int    )
+            .Case!( T, real   )
+            .Case!( U, string )
+       .Otherwise!(    void   ) A;
+    static assert(is(A == int));
+
+    alias StaticSwitch!( U )
+            .Case!( S, int    )
+            .Case!( T, real   )
+            .Case!( U, string )
+       .Otherwise!(    void   ) B;
+    static assert(is(B == string));
+
+    alias StaticSwitch!( X )
+            .Case!( S, int    )
+            .Case!( T, real   )
+            .Case!( U, string )
+       .Otherwise!(    void   ) C;
+    static assert(is(C == void));
+
+    // Finish is disallowed
+    static assert(!__traits(compiles,
+            StaticSwitch!( T )
+                .Case!( S, int    )
+                .Case!( T, real   )
+                .Case!( U, string )
+                .Finish ));
+}
+
+
+
+// Supporting templates for tracking the state of a StaticSwitch instance.
+
+private template SwitchState(alias target)
+{
+    static if (is(typeof(target) T) && is(T == enum))
+        alias SwitchState_Enum!(T, EnumMembers!T) SwitchState;
+    else
+        alias SwitchState_Symbol!(target) SwitchState;
+}
+
+private template SwitchState(Target)
+{
+    alias SwitchState_Type!(Target) SwitchState;
+}
+
+
+// SwitchState for closed enums.  This state elaborately deals with the
+// enum members and signals 'finished' when all the members are covered.
+private template SwitchState_Enum(Enum, enumMembers...)
+{
+    enum finished = (enumMembers.length == 0);
+
+    template pop(alias match)
+    {
+        alias SwitchState_Enum!(Enum, erase!(match)) pop;
+    }
+
+    private template erase(alias e, size_t i = 0)
+    {
+        static if (i < enumMembers.length)
+        {
+            static if (isSame!(enumMembers[i], e))
+                // Mark it as 'already covered' by removing it.
+                alias TypeTuple!(enumMembers[    0 .. i],
+                                 enumMembers[i + 1 .. $]) erase;
+            else
+                alias erase!(e, i + 1) erase;
+        }
+        else
+        {
+            // No such member, or it's already covered.
+            alias enumMembers erase;
+        }
+    }
+}
+
+
+// SwitchState for generic symbols and constants.
+private template SwitchState_Symbol(alias symbol, popList...)
+{
+    enum finished = false;
+
+    template pop(alias match)
+    {
+        alias SwitchState_Symbol!(symbol, append!(match)) pop;
+    }
+
+    private template append(alias e, size_t i = 0)
+    {
+        static if (i < popList.length)
+        {
+            static if (isSame!(popList[i], e))
+                // The symbol is already covered!
+                alias popList append;
+            else
+                alias append!(e, i + 1) append;
+        }
+        else
+        {
+            // Mark it as 'already covered' by appending to the list.
+            alias TypeTuple!(popList, e) append;
+        }
+    }
+}
+
+
+// SwitchState for generic types.
+private template SwitchState_Type(Type, popList...)
+{
+    enum finished = false;
+
+    template pop(Match)
+    {
+        alias SwitchState_Type!(Type, append!(Match)) pop;
+    }
+
+    private template append(E, size_t i = 0)
+    {
+        static if (i < popList.length)
+        {
+            static if (is(popList[i] == E))
+                // The type is already covered!
+                alias popList append;
+            else
+                alias append!(E, i + 1) append;
+        }
+        else
+        {
+            // Mark it as 'already covered' by appending to the list.
+            alias TypeTuple!(popList, E) append;
+        }
+    }
 }
 
